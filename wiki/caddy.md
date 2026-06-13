@@ -39,14 +39,21 @@ Before you begin, make sure you have:
 
 ## Prepare Env
 
-For base install, no env file is required:
+Connect to the server first:
 
 ```bash
-cd caddy
-sudo bash setup-caddy.sh
+ssh root@YOUR_SERVER_IP
 ```
 
-You may also keep a local Caddy env with empty domain values:
+Install git and clone the repository:
+
+```bash
+apt update && apt install -y git
+git clone https://github.com/jenesei-software/server-scripts.git
+cd server-scripts
+```
+
+For base install, no env file is required. If you want to keep explicit local settings, create `caddy/.env`:
 
 ```bash
 cd caddy
@@ -80,10 +87,9 @@ If `CADDYFILE` is empty or omitted, the default is `/etc/caddy/Caddyfile`.
 
 ## Run
 
-From the repository root:
+From `server-scripts/caddy`:
 
 ```bash
-cd caddy
 sudo bash setup-caddy.sh
 ```
 
@@ -96,7 +102,7 @@ sudo bash check-setup.sh
 Base install command:
 
 ```bash
-cd caddy
+cd server-scripts/caddy
 sudo bash setup-caddy.sh
 ```
 
@@ -105,9 +111,12 @@ In install-only mode, the script does not write a new Caddyfile.
 Fresh server example:
 
 ```bash
+ssh root@YOUR_SERVER_IP
 apt update && apt install -y git
 git clone https://github.com/jenesei-software/server-scripts.git
 cd server-scripts/caddy
+cp env.example .env
+nano .env
 sudo bash setup-caddy.sh
 ```
 
@@ -127,7 +136,7 @@ The module adds UFW rules but does not force-enable UFW. If UFW is already activ
 Run the module check:
 
 ```bash
-cd caddy
+cd server-scripts/caddy
 sudo bash check-setup.sh
 ```
 

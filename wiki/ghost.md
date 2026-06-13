@@ -57,6 +57,16 @@ GHOST_PORT=2368
 
 Run this module as a non-root sudo user.
 
+Clone the repository on the server:
+
+```bash
+sudo apt update && sudo apt install -y git
+git clone https://github.com/jenesei-software/server-scripts.git
+cd server-scripts
+```
+
+Prepare the Ghost env:
+
 ```bash
 cd ghost
 cp env.example .env
@@ -77,7 +87,7 @@ GHOST_DB_PASSWORD=change_me_ghost_db_password
 Install Caddy first:
 
 ```bash
-cd caddy
+cd server-scripts/caddy
 sudo bash setup-caddy.sh
 ```
 
@@ -127,7 +137,7 @@ Use that only when you plan to configure Caddy manually.
 ## Verify
 
 ```bash
-cd ghost
+cd server-scripts/ghost
 bash check-setup.sh
 ```
 

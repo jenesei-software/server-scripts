@@ -57,6 +57,22 @@ UMAMI_PORT=3000
 
 ## Prepare Env
 
+Connect to the server first:
+
+```bash
+ssh root@YOUR_SERVER_IP
+```
+
+Install git and clone the repository:
+
+```bash
+apt update && apt install -y git
+git clone https://github.com/jenesei-software/server-scripts.git
+cd server-scripts
+```
+
+Prepare the Umami env:
+
 ```bash
 cd umami
 cp env.example .env
@@ -79,7 +95,7 @@ Use only letters, digits, dots, underscores, dashes, and equals signs in `UMAMI_
 Install Caddy first:
 
 ```bash
-cd caddy
+cd server-scripts/caddy
 sudo bash setup-caddy.sh
 ```
 
@@ -131,7 +147,7 @@ Use that only when you plan to configure Caddy manually.
 ## Verify
 
 ```bash
-cd umami
+cd server-scripts/umami
 sudo bash check-setup.sh
 ```
 
