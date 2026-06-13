@@ -50,6 +50,8 @@ The script installs Node.js, MySQL, Ghost-CLI, creates the Ghost database/user, 
 
 Ghost listens locally on `GHOST_BIND_IP:GHOST_PORT`; Caddy serves the public `GHOST_URL`.
 
+By default, the setup writes `"staffDeviceVerification": false` into `config.production.json` through `GHOST_STAFF_DEVICE_VERIFICATION=false`, so admin login from a new phone does not require email verification when transactional email is not configured.
+
 The script creates `/etc/sudoers.d/90-server-scripts-ghost-<GHOST_SYSTEM_USER>` so Ghost-CLI can configure and restart systemd services without an interactive password prompt.
 
 ## Caddy Domain Conflicts

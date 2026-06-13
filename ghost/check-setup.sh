@@ -67,6 +67,7 @@ reset_env_vars() {
   GHOST_INSTALL_DIR=""
   GHOST_PORT=""
   GHOST_BIND_IP=""
+  GHOST_STAFF_DEVICE_VERIFICATION=""
   GHOST_DB_NAME=""
   GHOST_DB_USER=""
   GHOST_DB_PASSWORD=""
@@ -96,6 +97,7 @@ load_env() {
   GHOST_INSTALL_DIR="${GHOST_INSTALL_DIR:-/var/www/ghost}"
   GHOST_PORT="${GHOST_PORT:-2368}"
   GHOST_BIND_IP="${GHOST_BIND_IP:-127.0.0.1}"
+  GHOST_STAFF_DEVICE_VERIFICATION="${GHOST_STAFF_DEVICE_VERIFICATION:-false}"
   GHOST_DB_NAME="${GHOST_DB_NAME:-ghost_prod}"
   GHOST_DB_USER="${GHOST_DB_USER:-ghost}"
   GHOST_NODE_MAJOR="${GHOST_NODE_MAJOR:-22}"
@@ -212,6 +214,8 @@ SQL
 
 check_ghost() {
   section "Ghost"
+  local config_file="$GHOST_INSTALL_DIR/config.production.json"
+
   if [[ -d "$GHOST_INSTALL_DIR" ]]; then
     ok "Ghost install directory exists: $GHOST_INSTALL_DIR"
   else
@@ -220,7 +224,32 @@ check_ghost() {
   fi
 
   [[ -d "$GHOST_INSTALL_DIR/current" ]] && ok "Ghost current symlink/directory exists" || err "Ghost current directory is missing"
-  [[ -f "$GHOST_INSTALL_DIR/config.production.json" ]] && ok "Ghost production config exists" || warn "Ghost production config is missing"
+  [[ -f "$config_file" ]] && ok "Ghost production config exists" || warn "Ghost production config is missing"
+
+  if [[ -f "$config_file" ]] && command -v node >/dev/null 2>&1; then
+    local staff_device_verification
+    staff_device_verification="$(node - "$config_file" <<'NODE'
+const fs = require('fs');
+
+try {
+  const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+  const value = config.security && config.security.staffDeviceVerification;
+  if (value === true || value === false) {
+    console.log(String(value));
+  } else {
+    console.log('unset');
+  }
+} catch (error) {
+  console.log('invalid');
+}
+NODE
+)"
+    if [[ "$staff_device_verification" == "$GHOST_STAFF_DEVICE_VERIFICATION" ]]; then
+      ok "Ghost staffDeviceVerification=$staff_device_verification"
+    else
+      warn "Ghost staffDeviceVerification=$staff_device_verification, expected $GHOST_STAFF_DEVICE_VERIFICATION"
+    fi
+  fi
 
   if command -v ghost >/dev/null 2>&1; then
     (cd "$GHOST_INSTALL_DIR" && ghost status) || warn "ghost status reported a problem"

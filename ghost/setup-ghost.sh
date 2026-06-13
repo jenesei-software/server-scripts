@@ -65,6 +65,7 @@ reset_env_vars() {
   GHOST_INSTALL_DIR=""
   GHOST_PORT=""
   GHOST_BIND_IP=""
+  GHOST_STAFF_DEVICE_VERIFICATION=""
   GHOST_DB_NAME=""
   GHOST_DB_USER=""
   GHOST_DB_PASSWORD=""
@@ -89,6 +90,7 @@ load_env() {
   GHOST_INSTALL_DIR="${GHOST_INSTALL_DIR:-/var/www/ghost}"
   GHOST_PORT="${GHOST_PORT:-2368}"
   GHOST_BIND_IP="${GHOST_BIND_IP:-127.0.0.1}"
+  GHOST_STAFF_DEVICE_VERIFICATION="${GHOST_STAFF_DEVICE_VERIFICATION:-false}"
   GHOST_DB_NAME="${GHOST_DB_NAME:-ghost_prod}"
   GHOST_DB_USER="${GHOST_DB_USER:-ghost}"
   GHOST_NODE_MAJOR="${GHOST_NODE_MAJOR:-22}"
@@ -131,6 +133,7 @@ validate_env() {
   [[ "$GHOST_PORT" =~ ^[0-9]+$ ]] || fail "GHOST_PORT must be numeric"
   (( GHOST_PORT >= 1024 && GHOST_PORT <= 65535 )) || fail "GHOST_PORT must be between 1024 and 65535"
   [[ "$GHOST_NODE_MAJOR" =~ ^[0-9]+$ ]] || fail "GHOST_NODE_MAJOR must be numeric"
+  validate_bool "$GHOST_STAFF_DEVICE_VERIFICATION"
   validate_bool "$GHOST_CONFIGURE_CADDY"
   [[ "$GHOST_CADDY_OVERWRITE_DOMAIN" == "ask" || "$GHOST_CADDY_OVERWRITE_DOMAIN" == "true" || "$GHOST_CADDY_OVERWRITE_DOMAIN" == "false" ]] || fail "GHOST_CADDY_OVERWRITE_DOMAIN must be ask, true, or false"
   validate_identifier GHOST_DB_NAME "$GHOST_DB_NAME"
@@ -352,10 +355,14 @@ ensure_install_dir() {
   chmod 775 "$GHOST_INSTALL_DIR"
 }
 
+restart_ghost() {
+  sudo -H -u "$GHOST_SYSTEM_USER" env GHOST_INSTALL_DIR="$GHOST_INSTALL_DIR" bash -lc 'cd "$GHOST_INSTALL_DIR" && (ghost restart || ghost start)'
+}
+
 install_or_start_ghost() {
   if [[ -d "$GHOST_INSTALL_DIR/current" || -f "$GHOST_INSTALL_DIR/config.production.json" ]]; then
     log "Existing Ghost install detected, skipping install"
-    sudo -H -u "$GHOST_SYSTEM_USER" env GHOST_INSTALL_DIR="$GHOST_INSTALL_DIR" bash -lc 'cd "$GHOST_INSTALL_DIR" && (ghost restart || ghost start)'
+    restart_ghost
     return
   fi
 
@@ -384,6 +391,29 @@ install_or_start_ghost() {
       --no-setup-nginx \
       --no-setup-ssl
   '
+}
+
+configure_ghost_security() {
+  local config_file="$GHOST_INSTALL_DIR/config.production.json"
+  [[ -f "$config_file" ]] || fail "Ghost production config is missing: $config_file"
+
+  log "Setting Ghost security.staffDeviceVerification=$GHOST_STAFF_DEVICE_VERIFICATION"
+  GHOST_STAFF_DEVICE_VERIFICATION="$GHOST_STAFF_DEVICE_VERIFICATION" node - "$config_file" <<'NODE'
+const fs = require('fs');
+
+const configPath = process.argv[2];
+const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+const enabled = process.env.GHOST_STAFF_DEVICE_VERIFICATION === 'true';
+
+if (!config.security || typeof config.security !== 'object' || Array.isArray(config.security)) {
+  config.security = {};
+}
+
+config.security.staffDeviceVerification = enabled;
+fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+NODE
+
+  restart_ghost
 }
 
 managed_caddy_block() {
@@ -522,6 +552,7 @@ main() {
   setup_database
   ensure_install_dir
   install_or_start_ghost
+  configure_ghost_security
   configure_caddy
 
   log "Done. Ghost URL: $GHOST_URL"

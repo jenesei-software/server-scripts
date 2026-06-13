@@ -82,11 +82,13 @@ GHOST_SYSTEM_USER=ghostadmin
 GHOST_SYSTEM_PASSWORD=change_me_system_user_password
 GHOST_SYSTEM_SSH_PUB=""
 GHOST_URL=https://example.com
+GHOST_STAFF_DEVICE_VERIFICATION=false
 GHOST_DB_PASSWORD=change_me_ghost_db_password
 ```
 
 `GHOST_URL` must be the public URL with protocol.
 `GHOST_SYSTEM_USER` must not be `root` or `ghost`.
+`GHOST_STAFF_DEVICE_VERIFICATION=false` disables Ghost's staff email verification code for new devices, which is useful when transactional email is not configured yet.
 
 ## Run
 
@@ -105,6 +107,8 @@ bash setup-ghost.sh
 ```
 
 The script creates `/etc/sudoers.d/90-server-scripts-ghost-<GHOST_SYSTEM_USER>` so Ghost-CLI can configure and restart systemd services without an interactive password prompt.
+
+It also writes `"staffDeviceVerification": false` into Ghost's `config.production.json` by default.
 
 After setup, open:
 
