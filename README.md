@@ -30,6 +30,11 @@ Before you begin, make sure you have:
 |   |-- README.md
 |   |-- check-setup.sh
 |   `-- setup-ghost.sh
+|-- umami/
+|   |-- env.example
+|   |-- README.md
+|   |-- check-setup.sh
+|   `-- setup-umami.sh
 |-- ubuntu/
 |   |-- env.example
 |   |-- README.md
@@ -38,6 +43,7 @@ Before you begin, make sure you have:
 `-- wiki/
     |-- caddy.md
     |-- ghost.md
+    |-- umami.md
     `-- ubuntu.md
 ```
 
@@ -63,17 +69,15 @@ Documentation: [wiki/ubuntu.md](wiki/ubuntu.md)
 
 Caddy installation and optional reverse proxy configuration.
 
-Use only `caddy/.env` when you want the script to write `/etc/caddy/Caddyfile`:
+Base install without a domain:
 
 ```bash
 cd caddy
-cp env.example .env
-nano .env
 sudo bash setup-caddy.sh
 sudo bash check-setup.sh
 ```
 
-If `caddy/.env` is missing, the script installs and starts Caddy without replacing the current Caddyfile.
+If `caddy/.env` is missing, or if `CADDY_DOMAIN` and `CADDY_UPSTREAM` are empty, the script installs and starts Caddy without replacing the current Caddyfile. Service modules can add their own domains later.
 
 Documentation: [wiki/caddy.md](wiki/caddy.md)
 
@@ -95,6 +99,22 @@ Run this module as a non-root sudo user. Do not run it with `sudo bash`.
 
 Documentation: [wiki/ghost.md](wiki/ghost.md)
 
+### `umami/`
+
+One Umami Analytics instance behind Caddy.
+
+Use only `umami/.env`:
+
+```bash
+cd umami
+cp env.example .env
+nano .env
+sudo bash setup-umami.sh
+sudo bash check-setup.sh
+```
+
+Documentation: [wiki/umami.md](wiki/umami.md)
+
 ## Firewall Summary
 
 The Ubuntu module opens:
@@ -107,6 +127,8 @@ The Caddy module opens:
 * `443/tcp`
 
 The Ghost module does not open public ports directly. Ghost listens on a local port, and Caddy proxies public HTTP/HTTPS traffic to it.
+
+The Umami module does not open public ports directly. Umami listens on a local port, and Caddy proxies public HTTP/HTTPS traffic to it.
 
 The Caddy module installs UFW if needed and adds the HTTP/HTTPS rules. It does not force-enable UFW by itself, because enabling a firewall from an isolated Caddy script could affect SSH access on servers that did not run the Ubuntu module first.
 

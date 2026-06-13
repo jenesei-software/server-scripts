@@ -67,7 +67,7 @@ load_env() {
   resolve_env_file
   reset_env_vars
   if [[ -z "$ENV_FILE" ]]; then
-    warn "Environment file not found. Expected: $SCRIPT_DIR/.env"
+    info "Environment file not found; reverse proxy checks will be skipped"
     return
   fi
 

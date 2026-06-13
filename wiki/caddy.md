@@ -39,7 +39,14 @@ Before you begin, make sure you have:
 
 ## Prepare Env
 
-Use a local Caddy env only:
+For base install, no env file is required:
+
+```bash
+cd caddy
+sudo bash setup-caddy.sh
+```
+
+You may also keep a local Caddy env with empty domain values:
 
 ```bash
 cd caddy
@@ -55,6 +62,9 @@ CADDY_UPSTREAM=
 CADDY_EMAIL=
 CADDYFILE=
 ```
+
+When `CADDY_DOMAIN` and `CADDY_UPSTREAM` are empty, the script installs and starts Caddy without replacing `/etc/caddy/Caddyfile`.
+Service modules such as `ghost/` and `umami/` can add their own Caddy domains later.
 
 Example:
 
@@ -74,8 +84,6 @@ From the repository root:
 
 ```bash
 cd caddy
-cp env.example .env
-nano .env
 sudo bash setup-caddy.sh
 ```
 
@@ -85,7 +93,7 @@ After setup, verify the installation:
 sudo bash check-setup.sh
 ```
 
-Install-only mode:
+Base install command:
 
 ```bash
 cd caddy
@@ -100,8 +108,6 @@ Fresh server example:
 apt update && apt install -y git
 git clone https://github.com/jenesei-software/server-scripts.git
 cd server-scripts/caddy
-cp env.example .env
-nano .env
 sudo bash setup-caddy.sh
 ```
 

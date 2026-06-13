@@ -13,7 +13,15 @@ Before you begin, make sure you have:
 
 ## Setup
 
-With reverse proxy configuration:
+Base install without a domain:
+
+```bash
+sudo bash setup-caddy.sh
+```
+
+This installs and starts Caddy without replacing `/etc/caddy/Caddyfile`.
+
+You can also keep a local `.env` with empty domain values:
 
 ```bash
 cp env.example .env
@@ -21,13 +29,15 @@ nano .env
 sudo bash setup-caddy.sh
 ```
 
-Install-only mode:
+When `CADDY_DOMAIN` and `CADDY_UPSTREAM` are empty, the script does not write a site block. Service modules such as `ghost/` and `umami/` can add their own domains later.
 
-```bash
-sudo bash setup-caddy.sh
+Optional reverse proxy configuration:
+
+```env
+CADDY_DOMAIN=example.com
+CADDY_UPSTREAM=http://127.0.0.1:8080
+CADDY_EMAIL=admin@example.com
 ```
-
-If `.env` is missing, the setup script installs and starts Caddy without replacing `/etc/caddy/Caddyfile`.
 
 Use `CADDYFILE` to change the config path:
 
