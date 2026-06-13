@@ -19,17 +19,17 @@ Docker is installed automatically by this module when it is missing.
 Run the Caddy module first if this server does not have Caddy yet:
 
 ```bash
-cd ../caddy
-sudo bash setup-caddy.sh
+cd ~/server-scripts/caddy
+bash setup-caddy.sh
 ```
 
 Then prepare Umami:
 
 ```bash
-cd ../umami
+cd ~/server-scripts/umami
 cp env.example .env
 nano .env
-sudo bash setup-umami.sh
+bash setup-umami.sh
 ```
 
 The script installs Docker Engine, Docker Compose plugin, writes `/opt/umami/docker-compose.yml`, starts Umami with PostgreSQL, and adds a managed Caddy reverse proxy block.
@@ -54,7 +54,8 @@ Set `UMAMI_CONFIGURE_CADDY=false` to install Umami without changing Caddy.
 ## Check
 
 ```bash
-sudo bash check-setup.sh
+cd ~/server-scripts/umami
+bash check-setup.sh
 ```
 
 The check script only reports status. It does not change the server.

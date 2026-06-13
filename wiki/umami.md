@@ -67,8 +67,8 @@ Install git and clone the repository:
 
 ```bash
 apt update && apt install -y git
-git clone https://github.com/jenesei-software/server-scripts.git
-cd server-scripts
+git clone https://github.com/jenesei-software/ubuntu.git server-scripts
+cd ~/server-scripts
 ```
 
 Prepare the Umami env:
@@ -95,15 +95,15 @@ Use only letters, digits, dots, underscores, dashes, and equals signs in `UMAMI_
 Install Caddy first:
 
 ```bash
-cd server-scripts/caddy
-sudo bash setup-caddy.sh
+cd ~/server-scripts/caddy
+bash setup-caddy.sh
 ```
 
 Then run Umami setup:
 
 ```bash
-cd ../umami
-sudo bash setup-umami.sh
+cd ~/server-scripts/umami
+bash setup-umami.sh
 ```
 
 After setup, open `UMAMI_URL` in the browser.
@@ -147,8 +147,8 @@ Use that only when you plan to configure Caddy manually.
 ## Verify
 
 ```bash
-cd server-scripts/umami
-sudo bash check-setup.sh
+cd ~/server-scripts/umami
+bash check-setup.sh
 ```
 
 The check script verifies:
@@ -167,21 +167,21 @@ View logs:
 
 ```bash
 cd /opt/umami
-sudo docker compose logs -f
+docker compose logs -f
 ```
 
 Restart Umami:
 
 ```bash
 cd /opt/umami
-sudo docker compose up -d --force-recreate
+docker compose up -d --force-recreate
 ```
 
 Stop Umami:
 
 ```bash
 cd /opt/umami
-sudo docker compose down
+docker compose down
 ```
 
 ## Open Ports

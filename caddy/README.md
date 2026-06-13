@@ -16,7 +16,8 @@ Before you begin, make sure you have:
 Base install without a domain:
 
 ```bash
-sudo bash setup-caddy.sh
+cd ~/server-scripts/caddy
+bash setup-caddy.sh
 ```
 
 This installs and starts Caddy without replacing `/etc/caddy/Caddyfile`.
@@ -24,9 +25,10 @@ This installs and starts Caddy without replacing `/etc/caddy/Caddyfile`.
 You can also keep a local `.env` with empty domain values:
 
 ```bash
+cd ~/server-scripts/caddy
 cp env.example .env
 nano .env
-sudo bash setup-caddy.sh
+bash setup-caddy.sh
 ```
 
 When `CADDY_DOMAIN` and `CADDY_UPSTREAM` are empty, the script does not write a site block. Service modules such as `ghost/` and `umami/` can add their own domains later.
@@ -48,7 +50,8 @@ CADDYFILE=/etc/caddy/Caddyfile
 ## Check
 
 ```bash
-sudo bash check-setup.sh
+cd ~/server-scripts/caddy
+bash check-setup.sh
 ```
 
 The check script only reports status. It does not change the server.

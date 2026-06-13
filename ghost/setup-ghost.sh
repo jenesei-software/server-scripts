@@ -21,13 +21,7 @@ log_line() {
 log() { log_line "INFO" "$*"; }
 fail() { log_line "ERROR" "$*" >&2; exit 1; }
 require_cmd() { command -v "$1" >/dev/null 2>&1 || fail "Command not found: $1"; }
-
-require_non_root_sudo() {
-  [[ ${EUID:-$(id -u)} -ne 0 ]] || fail "Run as a non-root sudo user, not root: cd ghost && bash setup-ghost.sh"
-  [[ "$(id -un)" != "ghost" ]] || fail "Do not run Ghost-CLI as the user named ghost; use another sudo user"
-  require_cmd sudo
-  sudo -v
-}
+require_root() { [[ ${EUID:-$(id -u)} -eq 0 ]] || fail "Run as root: cd ~/server-scripts/ghost && bash setup-ghost.sh"; }
 
 resolve_env_path() {
   local candidate="$1"
@@ -64,6 +58,9 @@ resolve_env_file() {
 }
 
 reset_env_vars() {
+  GHOST_SYSTEM_USER=""
+  GHOST_SYSTEM_PASSWORD=""
+  GHOST_SYSTEM_SSH_PUB=""
   GHOST_URL=""
   GHOST_INSTALL_DIR=""
   GHOST_PORT=""
@@ -103,7 +100,7 @@ load_env() {
 
 require_vars() {
   local missing=()
-  for var in GHOST_URL GHOST_DB_PASSWORD; do
+  for var in GHOST_SYSTEM_USER GHOST_SYSTEM_PASSWORD GHOST_URL GHOST_DB_PASSWORD; do
     [[ -n "${!var:-}" ]] || missing+=("$var")
   done
   if (( ${#missing[@]} > 0 )); then
@@ -122,7 +119,14 @@ validate_identifier() {
   [[ "$value" =~ ^[A-Za-z0-9_]+$ ]] || fail "$name must contain only letters, digits, and underscores"
 }
 
+validate_system_user() {
+  [[ "$GHOST_SYSTEM_USER" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] || fail "GHOST_SYSTEM_USER must be a valid Linux user name"
+  [[ "$GHOST_SYSTEM_USER" != "root" ]] || fail "GHOST_SYSTEM_USER must not be root"
+  [[ "$GHOST_SYSTEM_USER" != "ghost" ]] || fail "GHOST_SYSTEM_USER must not be ghost"
+}
+
 validate_env() {
+  validate_system_user
   [[ "$GHOST_URL" =~ ^https?://[^/]+/?$ ]] || fail "GHOST_URL must be a full site URL, for example https://example.com"
   [[ "$GHOST_PORT" =~ ^[0-9]+$ ]] || fail "GHOST_PORT must be numeric"
   (( GHOST_PORT >= 1024 && GHOST_PORT <= 65535 )) || fail "GHOST_PORT must be between 1024 and 65535"
@@ -132,7 +136,48 @@ validate_env() {
   validate_identifier GHOST_DB_NAME "$GHOST_DB_NAME"
   validate_identifier GHOST_DB_USER "$GHOST_DB_USER"
   [[ "$GHOST_DB_PASSWORD" != *"'"* ]] || fail "GHOST_DB_PASSWORD must not contain a single quote"
+  [[ "$GHOST_SYSTEM_PASSWORD" != *"'"* ]] || fail "GHOST_SYSTEM_PASSWORD must not contain a single quote"
   [[ "$MYSQL_ADMIN_PASSWORD" != *"'"* ]] || fail "MYSQL_ADMIN_PASSWORD must not contain a single quote"
+}
+
+create_or_update_system_user() {
+  local sudoers_file
+
+  if id "$GHOST_SYSTEM_USER" >/dev/null 2>&1; then
+    log "System user already exists: $GHOST_SYSTEM_USER"
+  else
+    log "Creating system user: $GHOST_SYSTEM_USER"
+    adduser --disabled-password --gecos "" "$GHOST_SYSTEM_USER"
+  fi
+
+  echo "$GHOST_SYSTEM_USER:$GHOST_SYSTEM_PASSWORD" | chpasswd
+  getent group sudo >/dev/null 2>&1 || groupadd sudo
+  usermod -aG sudo "$GHOST_SYSTEM_USER"
+
+  sudoers_file="/etc/sudoers.d/90-server-scripts-ghost-$GHOST_SYSTEM_USER"
+  log "Allowing passwordless sudo for $GHOST_SYSTEM_USER so Ghost-CLI can configure systemd"
+  install -d -m 0755 /etc/sudoers.d
+  printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$GHOST_SYSTEM_USER" > "$sudoers_file"
+  chmod 0440 "$sudoers_file"
+
+  if [[ -n "${GHOST_SYSTEM_SSH_PUB:-}" ]]; then
+    local ssh_dir auth_keys
+    ssh_dir="/home/$GHOST_SYSTEM_USER/.ssh"
+    auth_keys="$ssh_dir/authorized_keys"
+
+    install -d -m 0700 -o "$GHOST_SYSTEM_USER" -g "$GHOST_SYSTEM_USER" "$ssh_dir"
+    touch "$auth_keys"
+    chmod 0600 "$auth_keys"
+    chown "$GHOST_SYSTEM_USER:$GHOST_SYSTEM_USER" "$auth_keys"
+
+    if ! grep -Fqx "$GHOST_SYSTEM_SSH_PUB" "$auth_keys"; then
+      log "Adding SSH public key for $GHOST_SYSTEM_USER"
+      printf '%s\n' "$GHOST_SYSTEM_SSH_PUB" >> "$auth_keys"
+      chown "$GHOST_SYSTEM_USER:$GHOST_SYSTEM_USER" "$auth_keys"
+    else
+      log "SSH public key is already present for $GHOST_SYSTEM_USER"
+    fi
+  fi
 }
 
 ghost_host() {
@@ -257,35 +302,35 @@ install_packages() {
   export UCF_FORCE_CONFFOLD=1
   export NEEDRESTART_MODE=a
 
-  sudo apt-get update
-  sudo apt-get -y \
+  apt-get update
+  apt-get -y \
     -o Dpkg::Options::="--force-confdef" \
     -o Dpkg::Options::="--force-confold" \
-    install ca-certificates curl gnupg mysql-server
+    install ca-certificates curl gnupg mysql-server sudo
 
-  sudo install -d -m 0755 /etc/apt/keyrings
+  install -d -m 0755 /etc/apt/keyrings
   curl -fsSL "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key" \
-    | sudo gpg --batch --yes --dearmor -o "$NODE_KEYRING"
-  sudo chmod 0644 "$NODE_KEYRING"
+    | gpg --batch --yes --dearmor -o "$NODE_KEYRING"
+  chmod 0644 "$NODE_KEYRING"
 
   printf 'deb [signed-by=%s] https://deb.nodesource.com/node_%s.x nodistro main\n' "$NODE_KEYRING" "$GHOST_NODE_MAJOR" \
-    | sudo tee "$NODE_SOURCE_LIST" >/dev/null
-  sudo chmod 0644 "$NODE_SOURCE_LIST"
+    > "$NODE_SOURCE_LIST"
+  chmod 0644 "$NODE_SOURCE_LIST"
 
-  sudo apt-get update
-  sudo apt-get -y \
+  apt-get update
+  apt-get -y \
     -o Dpkg::Options::="--force-confdef" \
     -o Dpkg::Options::="--force-confold" \
     install nodejs
 
-  sudo npm install ghost-cli@latest -g
+  npm install ghost-cli@latest -g
 }
 
 mysql_admin() {
   if [[ -n "${MYSQL_ADMIN_PASSWORD:-}" ]]; then
     mysql -u "$MYSQL_ADMIN_USER" -p"$MYSQL_ADMIN_PASSWORD"
   else
-    sudo mysql
+    mysql -u "$MYSQL_ADMIN_USER"
   fi
 }
 
@@ -301,25 +346,29 @@ SQL
 }
 
 ensure_install_dir() {
-  local run_user run_group
-  run_user="$(id -un)"
-  run_group="$(id -gn)"
-
   log "Preparing Ghost install directory: $GHOST_INSTALL_DIR"
-  sudo mkdir -p "$GHOST_INSTALL_DIR"
-  sudo chown "$run_user:$run_group" "$GHOST_INSTALL_DIR"
-  sudo chmod 775 "$GHOST_INSTALL_DIR"
+  mkdir -p "$GHOST_INSTALL_DIR"
+  chown "$GHOST_SYSTEM_USER:$GHOST_SYSTEM_USER" "$GHOST_INSTALL_DIR"
+  chmod 775 "$GHOST_INSTALL_DIR"
 }
 
 install_or_start_ghost() {
   if [[ -d "$GHOST_INSTALL_DIR/current" || -f "$GHOST_INSTALL_DIR/config.production.json" ]]; then
     log "Existing Ghost install detected, skipping install"
-    (cd "$GHOST_INSTALL_DIR" && (ghost restart || ghost start))
+    sudo -H -u "$GHOST_SYSTEM_USER" env GHOST_INSTALL_DIR="$GHOST_INSTALL_DIR" bash -lc 'cd "$GHOST_INSTALL_DIR" && (ghost restart || ghost start)'
     return
   fi
 
   log "Installing Ghost at $GHOST_INSTALL_DIR"
-  (
+  sudo -H -u "$GHOST_SYSTEM_USER" env \
+    GHOST_INSTALL_DIR="$GHOST_INSTALL_DIR" \
+    GHOST_URL="$GHOST_URL" \
+    GHOST_PORT="$GHOST_PORT" \
+    GHOST_BIND_IP="$GHOST_BIND_IP" \
+    GHOST_DB_USER="$GHOST_DB_USER" \
+    GHOST_DB_PASSWORD="$GHOST_DB_PASSWORD" \
+    GHOST_DB_NAME="$GHOST_DB_NAME" \
+    bash -lc '
     cd "$GHOST_INSTALL_DIR"
     ghost install \
       --no-prompt \
@@ -334,7 +383,7 @@ install_or_start_ghost() {
       --no-setup-mysql \
       --no-setup-nginx \
       --no-setup-ssl
-  )
+  '
 }
 
 managed_caddy_block() {
@@ -370,7 +419,7 @@ replace_managed_caddy_block() {
     !skip { print }
   ' "$CADDYFILE" > "$tmp_file"
 
-  sudo cp "$tmp_file" "$CADDYFILE"
+  cp "$tmp_file" "$CADDYFILE"
   rm -f "$tmp_file" "$block_file"
 }
 
@@ -417,7 +466,7 @@ remove_caddy_block_for_host() {
     }
   ' "$CADDYFILE" > "$tmp_file"
 
-  sudo cp "$tmp_file" "$CADDYFILE"
+  cp "$tmp_file" "$CADDYFILE"
   rm -f "$tmp_file"
 }
 
@@ -433,12 +482,12 @@ configure_caddy() {
   host="$(ghost_host)"
   log "Configuring Caddy for $host -> ${GHOST_BIND_IP}:${GHOST_PORT}"
 
-  sudo install -d -m 0755 "$(dirname -- "$CADDYFILE")"
+  install -d -m 0755 "$(dirname -- "$CADDYFILE")"
   if [[ -f "$CADDYFILE" ]]; then
     backup_file="${CADDYFILE}.bak.$(date +%s)"
-    sudo cp "$CADDYFILE" "$backup_file"
+    cp "$CADDYFILE" "$backup_file"
   else
-    sudo touch "$CADDYFILE"
+    touch "$CADDYFILE"
   fi
 
   if grep -Fq "$CADDY_MANAGED_PREFIX $host" "$CADDYFILE"; then
@@ -447,29 +496,29 @@ configure_caddy() {
     if [[ "${GHOST_CADDY_REPLACE_EXISTING_BLOCK:-false}" == "true" ]]; then
       remove_caddy_block_for_host "$host"
     fi
-    managed_caddy_block "$host" | sudo tee -a "$CADDYFILE" >/dev/null
+    managed_caddy_block "$host" | tee -a "$CADDYFILE" >/dev/null
   fi
 
-  if ! sudo caddy validate --config "$CADDYFILE"; then
+  if ! caddy validate --config "$CADDYFILE"; then
     if [[ -n "$backup_file" ]]; then
-      sudo cp "$backup_file" "$CADDYFILE"
+      cp "$backup_file" "$CADDYFILE"
       fail "Caddy validation failed. Restored backup: $backup_file"
     fi
-    sudo rm -f "$CADDYFILE"
+    rm -f "$CADDYFILE"
     fail "Caddy validation failed. Removed newly created Caddyfile."
   fi
 
-  sudo systemctl reload caddy 2>/dev/null || sudo systemctl restart caddy
+  systemctl reload caddy 2>/dev/null || systemctl restart caddy
 }
 
 main() {
-  require_non_root_sudo
-  require_cmd curl
+  require_root
   load_env
   require_vars
   validate_env
   preflight_caddy
   install_packages
+  create_or_update_system_user
   setup_database
   ensure_install_dir
   install_or_start_ghost

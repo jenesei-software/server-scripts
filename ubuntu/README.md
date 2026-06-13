@@ -14,9 +14,10 @@ Before you begin, make sure you have:
 ## Setup
 
 ```bash
+cd ~/server-scripts/ubuntu
 cp env.example .env
 nano .env
-sudo bash setup-ubuntu.sh
+bash setup-ubuntu.sh
 ```
 
 Keep the current root SSH session open after setup and test the new SSH login in another terminal:
@@ -28,7 +29,8 @@ ssh USER_NAME@YOUR_SERVER_IP -p PORT_SSH
 ## Check
 
 ```bash
-sudo bash check-setup.sh
+cd ~/server-scripts/ubuntu
+bash check-setup.sh
 ```
 
 The check script only reports status. It does not change the server.

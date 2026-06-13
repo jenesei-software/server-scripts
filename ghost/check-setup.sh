@@ -22,6 +22,8 @@ warn() { log_line "WARN" "$*"; }
 err() { log_line "ERROR" "$*"; }
 info() { log_line "INFO" "$*"; }
 section() { echo; log_line "SECTION" "$*"; }
+fail() { log_line "ERROR" "$*" >&2; exit 1; }
+require_root() { [[ ${EUID:-$(id -u)} -eq 0 ]] || fail "Run as root: cd ~/server-scripts/ghost && bash check-setup.sh"; }
 
 resolve_env_path() {
   local candidate="$1"
@@ -58,6 +60,9 @@ resolve_env_file() {
 }
 
 reset_env_vars() {
+  GHOST_SYSTEM_USER=""
+  GHOST_SYSTEM_PASSWORD=""
+  GHOST_SYSTEM_SSH_PUB=""
   GHOST_URL=""
   GHOST_INSTALL_DIR=""
   GHOST_PORT=""
@@ -129,7 +134,7 @@ mysql_admin() {
   if [[ -n "${MYSQL_ADMIN_PASSWORD:-}" ]]; then
     mysql -u "$MYSQL_ADMIN_USER" -p"$MYSQL_ADMIN_PASSWORD"
   else
-    sudo mysql
+    mysql -u "$MYSQL_ADMIN_USER"
   fi
 }
 
@@ -154,6 +159,33 @@ check_system() {
   fi
   if command -v ghost >/dev/null 2>&1; then
     info "Ghost-CLI version: $(ghost --version)"
+  fi
+}
+
+check_system_user() {
+  section "Ghost system user"
+  if [[ -z "${GHOST_SYSTEM_USER:-}" ]]; then
+    warn "GHOST_SYSTEM_USER is not set"
+    return
+  fi
+
+  if id "$GHOST_SYSTEM_USER" >/dev/null 2>&1; then
+    ok "System user exists: $GHOST_SYSTEM_USER"
+  else
+    err "System user does not exist: $GHOST_SYSTEM_USER"
+    return
+  fi
+
+  if id -nG "$GHOST_SYSTEM_USER" | tr ' ' '\n' | grep -qx sudo; then
+    ok "System user is in sudo group"
+  else
+    warn "System user is not in sudo group"
+  fi
+
+  if [[ -f "/etc/sudoers.d/90-server-scripts-ghost-$GHOST_SYSTEM_USER" ]]; then
+    ok "Passwordless sudo drop-in exists for Ghost system user"
+  else
+    warn "Passwordless sudo drop-in is missing for Ghost system user"
   fi
 }
 
@@ -212,7 +244,7 @@ check_caddy() {
   [[ -f "$CADDYFILE" ]] && ok "Caddyfile exists: $CADDYFILE" || { err "Caddyfile is missing: $CADDYFILE"; return; }
 
   if command -v caddy >/dev/null 2>&1; then
-    sudo caddy validate --config "$CADDYFILE" >/dev/null 2>&1 && ok "Caddyfile is valid" || err "Caddyfile validation failed"
+    caddy validate --config "$CADDYFILE" >/dev/null 2>&1 && ok "Caddyfile is valid" || err "Caddyfile validation failed"
   fi
 
   if [[ -n "${GHOST_URL:-}" ]]; then
@@ -253,8 +285,10 @@ check_ufw() {
 }
 
 main() {
+  require_root
   load_env
   check_system
+  check_system_user
   check_repositories
   check_mysql
   check_ghost

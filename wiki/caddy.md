@@ -49,8 +49,8 @@ Install git and clone the repository:
 
 ```bash
 apt update && apt install -y git
-git clone https://github.com/jenesei-software/server-scripts.git
-cd server-scripts
+git clone https://github.com/jenesei-software/ubuntu.git server-scripts
+cd ~/server-scripts
 ```
 
 For base install, no env file is required. If you want to keep explicit local settings, create `caddy/.env`:
@@ -87,23 +87,24 @@ If `CADDYFILE` is empty or omitted, the default is `/etc/caddy/Caddyfile`.
 
 ## Run
 
-From `server-scripts/caddy`:
+From `~/server-scripts/caddy`:
 
 ```bash
-sudo bash setup-caddy.sh
+cd ~/server-scripts/caddy
+bash setup-caddy.sh
 ```
 
 After setup, verify the installation:
 
 ```bash
-sudo bash check-setup.sh
+bash check-setup.sh
 ```
 
 Base install command:
 
 ```bash
-cd server-scripts/caddy
-sudo bash setup-caddy.sh
+cd ~/server-scripts/caddy
+bash setup-caddy.sh
 ```
 
 In install-only mode, the script does not write a new Caddyfile.
@@ -113,11 +114,11 @@ Fresh server example:
 ```bash
 ssh root@YOUR_SERVER_IP
 apt update && apt install -y git
-git clone https://github.com/jenesei-software/server-scripts.git
-cd server-scripts/caddy
+git clone https://github.com/jenesei-software/ubuntu.git server-scripts
+cd ~/server-scripts/caddy
 cp env.example .env
 nano .env
-sudo bash setup-caddy.sh
+bash setup-caddy.sh
 ```
 
 ## Open Ports
@@ -136,8 +137,8 @@ The module adds UFW rules but does not force-enable UFW. If UFW is already activ
 Run the module check:
 
 ```bash
-cd server-scripts/caddy
-sudo bash check-setup.sh
+cd ~/server-scripts/caddy
+bash check-setup.sh
 ```
 
 Manual Caddy checks:
@@ -150,13 +151,13 @@ caddy validate --config /etc/caddy/Caddyfile
 Reload Caddy:
 
 ```bash
-sudo systemctl reload caddy
+systemctl reload caddy
 ```
 
 Show firewall rules:
 
 ```bash
-sudo ufw status numbered
+ufw status numbered
 ```
 
 ## Important Notes

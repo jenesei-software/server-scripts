@@ -10,10 +10,22 @@ Before you begin, make sure you have:
 
 * a server running **Ubuntu 24.04**
 * root access to the server
-* a non-root sudo user for modules that must not run as root, such as `ghost/`
 * a domain name already pointed to the server if you want Caddy to issue TLS certificates
 * a valid SSH public key for the `ubuntu/` module
 * the ability to open the required ports from the internet
+
+## Root Checkout
+
+Download this repository once as `root` and run every module from that same checkout:
+
+```bash
+ssh root@YOUR_SERVER_IP
+apt update && apt install -y git
+git clone https://github.com/jenesei-software/ubuntu.git server-scripts
+cd server-scripts
+```
+
+Do not copy module scripts into service users' home directories. Service modules can create their own Linux users internally, but the scripts stay in the root-owned `server-scripts` directory.
 
 ## Structure
 
@@ -56,11 +68,11 @@ Base Ubuntu hardening and SSH setup.
 Use only `ubuntu/.env`:
 
 ```bash
-cd ubuntu
+cd ~/server-scripts/ubuntu
 cp env.example .env
 nano .env
-sudo bash setup-ubuntu.sh
-sudo bash check-setup.sh
+bash setup-ubuntu.sh
+bash check-setup.sh
 ```
 
 Documentation: [wiki/ubuntu.md](wiki/ubuntu.md)
@@ -72,9 +84,9 @@ Caddy installation and optional reverse proxy configuration.
 Base install without a domain:
 
 ```bash
-cd caddy
-sudo bash setup-caddy.sh
-sudo bash check-setup.sh
+cd ~/server-scripts/caddy
+bash setup-caddy.sh
+bash check-setup.sh
 ```
 
 If `caddy/.env` is missing, or if `CADDY_DOMAIN` and `CADDY_UPSTREAM` are empty, the script installs and starts Caddy without replacing the current Caddyfile. Service modules can add their own domains later.
@@ -88,14 +100,14 @@ One production Ghost instance behind Caddy.
 Use only `ghost/.env`:
 
 ```bash
-cd ghost
+cd ~/server-scripts/ghost
 cp env.example .env
 nano .env
 bash setup-ghost.sh
 bash check-setup.sh
 ```
 
-Run this module as a non-root sudo user. Do not run it with `sudo bash`.
+The Ghost module is started by root from this checkout and creates/uses the Ghost system user from `ghost/.env` only for running Ghost itself.
 
 Documentation: [wiki/ghost.md](wiki/ghost.md)
 
@@ -106,11 +118,11 @@ One Umami Analytics instance behind Caddy.
 Use only `umami/.env`:
 
 ```bash
-cd umami
+cd ~/server-scripts/umami
 cp env.example .env
 nano .env
-sudo bash setup-umami.sh
-sudo bash check-setup.sh
+bash setup-umami.sh
+bash check-setup.sh
 ```
 
 Documentation: [wiki/umami.md](wiki/umami.md)

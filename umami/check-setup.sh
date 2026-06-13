@@ -22,6 +22,8 @@ warn() { log_line "WARN" "$*"; }
 err() { log_line "ERROR" "$*"; }
 info() { log_line "INFO" "$*"; }
 section() { echo; log_line "SECTION" "$*"; }
+fail() { log_line "ERROR" "$*" >&2; exit 1; }
+require_root() { [[ ${EUID:-$(id -u)} -eq 0 ]] || fail "Run as root: cd ~/server-scripts/umami && bash check-setup.sh"; }
 
 resolve_env_path() {
   local candidate="$1"
@@ -243,6 +245,7 @@ check_ufw() {
 }
 
 main() {
+  require_root
   load_env
   check_system
   check_repository

@@ -14,7 +14,7 @@ References:
 Before you begin, make sure you have:
 
 * a server running **Ubuntu 24.04**
-* a non-root sudo user
+* root access to the server
 * Caddy installed on the server
 * a domain name already pointed to the server
 * the ability to open `80/tcp` and `443/tcp` from the internet
@@ -55,14 +55,16 @@ GHOST_PORT=2368
 
 ## Prepare Env
 
-Run this module as a non-root sudo user.
+Run this module from the same root-owned checkout where you downloaded `server-scripts`.
+The repository stays there. `GHOST_SYSTEM_USER` is only the Linux user that owns and runs Ghost.
 
 Clone the repository on the server:
 
 ```bash
-sudo apt update && sudo apt install -y git
-git clone https://github.com/jenesei-software/server-scripts.git
-cd server-scripts
+ssh root@YOUR_SERVER_IP
+apt update && apt install -y git
+git clone https://github.com/jenesei-software/ubuntu.git server-scripts
+cd ~/server-scripts
 ```
 
 Prepare the Ghost env:
@@ -76,27 +78,33 @@ nano .env
 Required values:
 
 ```env
+GHOST_SYSTEM_USER=ghostadmin
+GHOST_SYSTEM_PASSWORD=change_me_system_user_password
+GHOST_SYSTEM_SSH_PUB=""
 GHOST_URL=https://example.com
 GHOST_DB_PASSWORD=change_me_ghost_db_password
 ```
 
 `GHOST_URL` must be the public URL with protocol.
+`GHOST_SYSTEM_USER` must not be `root` or `ghost`.
 
 ## Run
 
 Install Caddy first:
 
 ```bash
-cd server-scripts/caddy
-sudo bash setup-caddy.sh
+cd ~/server-scripts/caddy
+bash setup-caddy.sh
 ```
 
-Then run Ghost setup as a non-root sudo user:
+Then run Ghost setup as root:
 
 ```bash
-cd ../ghost
+cd ~/server-scripts/ghost
 bash setup-ghost.sh
 ```
+
+The script creates `/etc/sudoers.d/90-server-scripts-ghost-<GHOST_SYSTEM_USER>` so Ghost-CLI can configure and restart systemd services without an interactive password prompt.
 
 After setup, open:
 
@@ -137,7 +145,7 @@ Use that only when you plan to configure Caddy manually.
 ## Verify
 
 ```bash
-cd server-scripts/ghost
+cd ~/server-scripts/ghost
 bash check-setup.sh
 ```
 

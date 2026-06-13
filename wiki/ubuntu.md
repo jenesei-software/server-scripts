@@ -85,11 +85,11 @@ Install git and clone the repository:
 
 ```bash
 apt update && apt install -y git
-git clone https://github.com/jenesei-software/server-scripts.git
-cd server-scripts/ubuntu
+git clone https://github.com/jenesei-software/ubuntu.git server-scripts
+cd ~/server-scripts/ubuntu
 cp env.example .env
 nano .env
-sudo bash setup-ubuntu.sh
+bash setup-ubuntu.sh
 ```
 
 After the script finishes, keep the current root session open and test a new SSH session:
@@ -105,8 +105,8 @@ Only close the root session after the new SSH login works.
 From the repository root:
 
 ```bash
-cd ubuntu
-sudo bash check-setup.sh
+cd ~/server-scripts/ubuntu
+bash check-setup.sh
 ```
 
 ## Open Ports
