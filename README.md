@@ -42,6 +42,16 @@ Do not copy module scripts into service users' home directories. Service modules
 |   |-- README.md
 |   |-- check-setup.sh
 |   `-- setup-ghost.sh
+|-- netdata/
+|   |-- env.example
+|   |-- README.md
+|   |-- check-setup.sh
+|   `-- setup-netdata.sh
+|-- uptime-kuma/
+|   |-- env.example
+|   |-- README.md
+|   |-- check-setup.sh
+|   `-- setup-uptime-kuma.sh
 |-- umami/
 |   |-- env.example
 |   |-- README.md
@@ -55,6 +65,8 @@ Do not copy module scripts into service users' home directories. Service modules
 `-- wiki/
     |-- caddy.md
     |-- ghost.md
+    |-- netdata.md
+    |-- uptime-kuma.md
     |-- umami.md
     `-- ubuntu.md
 ```
@@ -111,6 +123,42 @@ The Ghost module is started by root from this checkout and creates/uses the Ghos
 
 Documentation: [wiki/ghost.md](wiki/ghost.md)
 
+### `uptime-kuma/`
+
+One Uptime Kuma status monitor behind Caddy.
+
+Use only `uptime-kuma/.env`:
+
+```bash
+cd ~/server-scripts/uptime-kuma
+cp env.example .env
+nano .env
+bash setup-uptime-kuma.sh
+bash check-setup.sh
+```
+
+Default public URL: `https://status.cyrilstrone.com`
+
+Documentation: [wiki/uptime-kuma.md](wiki/uptime-kuma.md)
+
+### `netdata/`
+
+One Netdata server dashboard behind Caddy basic auth.
+
+Use only `netdata/.env`:
+
+```bash
+cd ~/server-scripts/netdata
+cp env.example .env
+nano .env
+bash setup-netdata.sh
+bash check-setup.sh
+```
+
+Default public URL: `https://server.cyrilstrone.com`
+
+Documentation: [wiki/netdata.md](wiki/netdata.md)
+
 ### `umami/`
 
 One Umami Analytics instance behind Caddy.
@@ -141,6 +189,10 @@ The Caddy module opens:
 The Ghost module does not open public ports directly. Ghost listens on a local port, and Caddy proxies public HTTP/HTTPS traffic to it.
 
 The Umami module does not open public ports directly. Umami listens on a local port, and Caddy proxies public HTTP/HTTPS traffic to it.
+
+The Uptime Kuma module does not open public ports directly. Uptime Kuma listens on a local port, and Caddy proxies public HTTP/HTTPS traffic to it.
+
+The Netdata module does not open public ports directly. Netdata listens on a local port, and Caddy proxies public HTTP/HTTPS traffic to it. Netdata is protected with Caddy basic auth by default.
 
 The Caddy module installs UFW if needed and adds the HTTP/HTTPS rules. It does not force-enable UFW by itself, because enabling a firewall from an isolated Caddy script could affect SSH access on servers that did not run the Ubuntu module first.
 
