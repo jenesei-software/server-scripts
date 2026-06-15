@@ -38,6 +38,20 @@ Uptime Kuma listens locally on `UPTIME_KUMA_BIND_IP:UPTIME_KUMA_PORT`; Caddy ser
 
 Open `UPTIME_KUMA_URL` and create the first admin account.
 
+## Service User
+
+By default, Docker Compose operations run as root. To run them as a dedicated Linux user, set:
+
+```env
+UPTIME_KUMA_SYSTEM_USER=uptimeadmin
+UPTIME_KUMA_SYSTEM_PASSWORD=changeMeSystemPassword
+UPTIME_KUMA_SYSTEM_SSH_PUB=""
+```
+
+When `UPTIME_KUMA_SYSTEM_USER` is set, setup creates or reuses that user, adds it to the `docker` group, gives it `/opt/uptime-kuma`, and runs Docker Compose as that user.
+
+Details: [../wiki/service-users.md](../wiki/service-users.md)
+
 ## Caddy Domain Conflicts
 
 If `UPTIME_KUMA_URL` already exists in `/etc/caddy/Caddyfile`, the setup script checks the existing block.

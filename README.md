@@ -27,6 +27,8 @@ cd server-scripts
 
 Do not copy module scripts into service users' home directories. Service modules can create their own Linux users internally, but the scripts stay in the root-owned `server-scripts` directory.
 
+Service user model: [wiki/service-users.md](wiki/service-users.md)
+
 ## Structure
 
 ```text
@@ -47,6 +49,11 @@ Do not copy module scripts into service users' home directories. Service modules
 |   |-- README.md
 |   |-- check-setup.sh
 |   `-- setup-netdata.sh
+|-- supabase/
+|   |-- env.example
+|   |-- README.md
+|   |-- check-setup.sh
+|   `-- setup-supabase.sh
 |-- uptime-kuma/
 |   |-- env.example
 |   |-- README.md
@@ -66,6 +73,8 @@ Do not copy module scripts into service users' home directories. Service modules
     |-- caddy.md
     |-- ghost.md
     |-- netdata.md
+    |-- service-users.md
+    |-- supabase.md
     |-- uptime-kuma.md
     |-- umami.md
     `-- ubuntu.md
@@ -159,6 +168,24 @@ Default public URL: `https://server.cyrilstrone.com`
 
 Documentation: [wiki/netdata.md](wiki/netdata.md)
 
+### `supabase/`
+
+One self-hosted Supabase project behind Caddy.
+
+Use only `supabase/.env`:
+
+```bash
+cd ~/server-scripts/supabase
+cp env.example .env
+nano .env
+bash setup-supabase.sh
+bash check-setup.sh
+```
+
+Supabase requires more resources than the smaller service modules. Use at least 4 GB RAM, with 8 GB+ RAM recommended.
+
+Documentation: [wiki/supabase.md](wiki/supabase.md)
+
 ### `umami/`
 
 One Umami Analytics instance behind Caddy.
@@ -193,6 +220,8 @@ The Umami module does not open public ports directly. Umami listens on a local p
 The Uptime Kuma module does not open public ports directly. Uptime Kuma listens on a local port, and Caddy proxies public HTTP/HTTPS traffic to it.
 
 The Netdata module does not open public ports directly. Netdata listens on a local port, and Caddy proxies public HTTP/HTTPS traffic to it. Netdata is protected with Caddy basic auth by default.
+
+The Supabase module does not open public ports directly. Supabase Kong and Supavisor are bound to local IP addresses by default, and Caddy proxies public HTTP/HTTPS traffic to Kong.
 
 The Caddy module installs UFW if needed and adds the HTTP/HTTPS rules. It does not force-enable UFW by itself, because enabling a firewall from an isolated Caddy script could affect SSH access on servers that did not run the Ubuntu module first.
 

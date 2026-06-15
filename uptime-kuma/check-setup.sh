@@ -65,6 +65,9 @@ reset_env_vars() {
   UPTIME_KUMA_BIND_IP=""
   UPTIME_KUMA_PORT=""
   UPTIME_KUMA_CONTAINER_NAME=""
+  UPTIME_KUMA_SYSTEM_USER=""
+  UPTIME_KUMA_SYSTEM_PASSWORD=""
+  UPTIME_KUMA_SYSTEM_SSH_PUB=""
   UPTIME_KUMA_CONFIGURE_CADDY=""
   CADDYFILE=""
 }
@@ -88,6 +91,7 @@ load_env() {
   UPTIME_KUMA_BIND_IP="${UPTIME_KUMA_BIND_IP:-127.0.0.1}"
   UPTIME_KUMA_PORT="${UPTIME_KUMA_PORT:-3001}"
   UPTIME_KUMA_CONTAINER_NAME="${UPTIME_KUMA_CONTAINER_NAME:-uptime-kuma}"
+  UPTIME_KUMA_SYSTEM_USER="${UPTIME_KUMA_SYSTEM_USER:-}"
   UPTIME_KUMA_CONFIGURE_CADDY="${UPTIME_KUMA_CONFIGURE_CADDY:-true}"
   CADDYFILE="${CADDYFILE:-/etc/caddy/Caddyfile}"
 }
@@ -106,6 +110,34 @@ check_service_active() {
     ok "Service $service: active"
   else
     err "Service $service: NOT active"
+  fi
+}
+
+service_user_enabled() {
+  [[ -n "${UPTIME_KUMA_SYSTEM_USER:-}" ]]
+}
+
+check_service_user() {
+  section "Service user"
+  if ! service_user_enabled; then
+    info "UPTIME_KUMA_SYSTEM_USER is empty; Docker Compose operations are run as root"
+    return
+  fi
+
+  if id "$UPTIME_KUMA_SYSTEM_USER" >/dev/null 2>&1; then
+    ok "Service user exists: $UPTIME_KUMA_SYSTEM_USER"
+  else
+    err "Service user is missing: $UPTIME_KUMA_SYSTEM_USER"
+    return
+  fi
+
+  id -nG "$UPTIME_KUMA_SYSTEM_USER" | tr ' ' '\n' | grep -qx docker && ok "Service user is in docker group" || err "Service user is not in docker group"
+  [[ -d "$UPTIME_KUMA_INSTALL_DIR" ]] && [[ "$(stat -c '%U' "$UPTIME_KUMA_INSTALL_DIR")" == "$UPTIME_KUMA_SYSTEM_USER" ]] && ok "Install directory is owned by $UPTIME_KUMA_SYSTEM_USER" || warn "Install directory is not owned by $UPTIME_KUMA_SYSTEM_USER"
+
+  if runuser -u "$UPTIME_KUMA_SYSTEM_USER" -- docker info >/dev/null 2>&1; then
+    ok "Service user can access Docker"
+  else
+    err "Service user cannot access Docker"
   fi
 }
 
@@ -236,6 +268,7 @@ main() {
   require_root
   load_env
   check_system
+  check_service_user
   check_repository
   check_compose
   check_uptime_kuma

@@ -116,6 +116,20 @@ admin / umami
 
 Change the default password immediately after the first login.
 
+## Service User
+
+By default, Docker Compose operations run as root. To run them as a dedicated Linux user, set:
+
+```env
+UMAMI_SYSTEM_USER=umamiadmin
+UMAMI_SYSTEM_PASSWORD=changeMeSystemPassword
+UMAMI_SYSTEM_SSH_PUB=""
+```
+
+When `UMAMI_SYSTEM_USER` is set, setup creates or reuses that user, adds it to the `docker` group, gives it `/opt/umami`, and runs Docker Compose as that user.
+
+Details: [service-users.md](service-users.md)
+
 ## Domain Conflict Behavior
 
 If `UMAMI_URL` uses a domain that is already present in `/etc/caddy/Caddyfile`:

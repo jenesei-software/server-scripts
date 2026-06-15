@@ -73,6 +73,9 @@ reset_env_vars() {
   UMAMI_DB_PASSWORD=""
   UMAMI_APP_SECRET=""
   UMAMI_DISABLE_TELEMETRY=""
+  UMAMI_SYSTEM_USER=""
+  UMAMI_SYSTEM_PASSWORD=""
+  UMAMI_SYSTEM_SSH_PUB=""
   UMAMI_CONFIGURE_CADDY=""
   UMAMI_CADDY_OVERWRITE_DOMAIN=""
   CADDYFILE=""
@@ -98,6 +101,7 @@ load_env() {
   UMAMI_PORT="${UMAMI_PORT:-3000}"
   UMAMI_CONTAINER_NAME="${UMAMI_CONTAINER_NAME:-umami}"
   UMAMI_DB_CONTAINER_NAME="${UMAMI_DB_CONTAINER_NAME:-umami-db}"
+  UMAMI_SYSTEM_USER="${UMAMI_SYSTEM_USER:-}"
   UMAMI_CONFIGURE_CADDY="${UMAMI_CONFIGURE_CADDY:-true}"
   CADDYFILE="${CADDYFILE:-/etc/caddy/Caddyfile}"
 }
@@ -116,6 +120,34 @@ check_service_active() {
     ok "Service $service: active"
   else
     err "Service $service: NOT active"
+  fi
+}
+
+service_user_enabled() {
+  [[ -n "${UMAMI_SYSTEM_USER:-}" ]]
+}
+
+check_service_user() {
+  section "Service user"
+  if ! service_user_enabled; then
+    info "UMAMI_SYSTEM_USER is empty; Docker Compose operations are run as root"
+    return
+  fi
+
+  if id "$UMAMI_SYSTEM_USER" >/dev/null 2>&1; then
+    ok "Service user exists: $UMAMI_SYSTEM_USER"
+  else
+    err "Service user is missing: $UMAMI_SYSTEM_USER"
+    return
+  fi
+
+  id -nG "$UMAMI_SYSTEM_USER" | tr ' ' '\n' | grep -qx docker && ok "Service user is in docker group" || err "Service user is not in docker group"
+  [[ -d "$UMAMI_INSTALL_DIR" ]] && [[ "$(stat -c '%U' "$UMAMI_INSTALL_DIR")" == "$UMAMI_SYSTEM_USER" ]] && ok "Install directory is owned by $UMAMI_SYSTEM_USER" || warn "Install directory is not owned by $UMAMI_SYSTEM_USER"
+
+  if runuser -u "$UMAMI_SYSTEM_USER" -- docker info >/dev/null 2>&1; then
+    ok "Service user can access Docker"
+  else
+    err "Service user cannot access Docker"
   fi
 }
 
@@ -248,6 +280,7 @@ main() {
   require_root
   load_env
   check_system
+  check_service_user
   check_repository
   check_compose
   check_umami

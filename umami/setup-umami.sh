@@ -71,6 +71,9 @@ reset_env_vars() {
   UMAMI_DB_PASSWORD=""
   UMAMI_APP_SECRET=""
   UMAMI_DISABLE_TELEMETRY=""
+  UMAMI_SYSTEM_USER=""
+  UMAMI_SYSTEM_PASSWORD=""
+  UMAMI_SYSTEM_SSH_PUB=""
   UMAMI_CONFIGURE_CADDY=""
   UMAMI_CADDY_OVERWRITE_DOMAIN=""
   CADDYFILE=""
@@ -96,6 +99,9 @@ load_env() {
   UMAMI_DB_NAME="${UMAMI_DB_NAME:-umami}"
   UMAMI_DB_USER="${UMAMI_DB_USER:-umami}"
   UMAMI_DISABLE_TELEMETRY="${UMAMI_DISABLE_TELEMETRY:-1}"
+  UMAMI_SYSTEM_USER="${UMAMI_SYSTEM_USER:-}"
+  UMAMI_SYSTEM_PASSWORD="${UMAMI_SYSTEM_PASSWORD:-}"
+  UMAMI_SYSTEM_SSH_PUB="${UMAMI_SYSTEM_SSH_PUB:-}"
   UMAMI_CONFIGURE_CADDY="${UMAMI_CONFIGURE_CADDY:-true}"
   UMAMI_CADDY_OVERWRITE_DOMAIN="${UMAMI_CADDY_OVERWRITE_DOMAIN:-ask}"
   CADDYFILE="${CADDYFILE:-/etc/caddy/Caddyfile}"
@@ -128,6 +134,14 @@ validate_safe_secret() {
   [[ "$value" =~ ^[A-Za-z0-9_.=-]+$ ]] || fail "$name must contain only letters, digits, dots, underscores, dashes, equals signs"
 }
 
+validate_system_user_env() {
+  [[ -z "$UMAMI_SYSTEM_USER" ]] && return
+  [[ "$UMAMI_SYSTEM_USER" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] || fail "UMAMI_SYSTEM_USER must be a valid Linux user name"
+  [[ "$UMAMI_SYSTEM_USER" != "root" ]] || fail "UMAMI_SYSTEM_USER must not be root"
+  [[ "$UMAMI_SYSTEM_PASSWORD" != *:* ]] || fail "UMAMI_SYSTEM_PASSWORD must not contain a colon"
+  [[ "$UMAMI_SYSTEM_PASSWORD" != *$'\n'* ]] || fail "UMAMI_SYSTEM_PASSWORD must not contain a newline"
+}
+
 validate_env() {
   [[ "$UMAMI_URL" =~ ^https?://[^/]+/?$ ]] || fail "UMAMI_URL must be a full site URL, for example https://analytics.example.com"
   [[ "$UMAMI_PORT" =~ ^[0-9]+$ ]] || fail "UMAMI_PORT must be numeric"
@@ -139,6 +153,26 @@ validate_env() {
   validate_identifier UMAMI_DB_USER "$UMAMI_DB_USER"
   validate_safe_secret UMAMI_DB_PASSWORD "$UMAMI_DB_PASSWORD"
   validate_safe_secret UMAMI_APP_SECRET "$UMAMI_APP_SECRET"
+  validate_system_user_env
+}
+
+service_user_enabled() {
+  [[ -n "${UMAMI_SYSTEM_USER:-}" ]]
+}
+
+service_user_home() {
+  local home
+  home="$(getent passwd "$UMAMI_SYSTEM_USER" | cut -d: -f6)"
+  [[ -n "$home" ]] || home="/home/$UMAMI_SYSTEM_USER"
+  printf '%s\n' "$home"
+}
+
+run_as_service_user() {
+  if service_user_enabled; then
+    runuser -u "$UMAMI_SYSTEM_USER" -- env HOME="$(service_user_home)" "$@"
+  else
+    "$@"
+  fi
 }
 
 umami_host() {
@@ -295,6 +329,51 @@ install_docker() {
   systemctl enable --now docker
 }
 
+create_or_update_service_user() {
+  service_user_enabled || return
+  require_cmd runuser
+
+  local ssh_dir auth_keys
+
+  if id "$UMAMI_SYSTEM_USER" >/dev/null 2>&1; then
+    log "Service user already exists: $UMAMI_SYSTEM_USER"
+  else
+    log "Creating service user: $UMAMI_SYSTEM_USER"
+    adduser --disabled-password --gecos "" "$UMAMI_SYSTEM_USER"
+  fi
+
+  if [[ -n "$UMAMI_SYSTEM_PASSWORD" ]]; then
+    log "Updating password for service user: $UMAMI_SYSTEM_USER"
+    printf '%s:%s\n' "$UMAMI_SYSTEM_USER" "$UMAMI_SYSTEM_PASSWORD" | chpasswd
+  fi
+
+  getent group docker >/dev/null 2>&1 || groupadd docker
+  usermod -aG docker "$UMAMI_SYSTEM_USER"
+
+  if [[ -n "${UMAMI_SYSTEM_SSH_PUB:-}" ]]; then
+    ssh_dir="$(service_user_home)/.ssh"
+    auth_keys="$ssh_dir/authorized_keys"
+
+    install -d -m 0700 "$ssh_dir"
+    chown "$UMAMI_SYSTEM_USER:" "$ssh_dir"
+    touch "$auth_keys"
+    chmod 0600 "$auth_keys"
+    chown "$UMAMI_SYSTEM_USER:" "$auth_keys"
+
+    if ! grep -Fqx "$UMAMI_SYSTEM_SSH_PUB" "$auth_keys"; then
+      log "Adding SSH public key for $UMAMI_SYSTEM_USER"
+      printf '%s\n' "$UMAMI_SYSTEM_SSH_PUB" >> "$auth_keys"
+      chown "$UMAMI_SYSTEM_USER:" "$auth_keys"
+    else
+      log "SSH public key is already present for $UMAMI_SYSTEM_USER"
+    fi
+  fi
+
+  if ! run_as_service_user docker info >/dev/null 2>&1; then
+    fail "Service user $UMAMI_SYSTEM_USER cannot access Docker. Check docker group membership and Docker socket permissions."
+  fi
+}
+
 write_compose_file() {
   log "Writing Docker Compose file: $UMAMI_INSTALL_DIR/docker-compose.yml"
   install -d -m 0755 "$UMAMI_INSTALL_DIR"
@@ -341,12 +420,16 @@ services:
 volumes:
   umami-db-data:
 EOF
+
+  if service_user_enabled; then
+    chown -R "$UMAMI_SYSTEM_USER:" "$UMAMI_INSTALL_DIR"
+  fi
 }
 
 start_umami() {
   log "Starting Umami stack"
-  docker compose -f "$UMAMI_INSTALL_DIR/docker-compose.yml" pull
-  docker compose -f "$UMAMI_INSTALL_DIR/docker-compose.yml" up -d
+  run_as_service_user docker compose -f "$UMAMI_INSTALL_DIR/docker-compose.yml" pull
+  run_as_service_user docker compose -f "$UMAMI_INSTALL_DIR/docker-compose.yml" up -d
 }
 
 managed_caddy_block() {
@@ -481,6 +564,7 @@ main() {
   validate_env
   preflight_caddy
   install_docker
+  create_or_update_service_user
   write_compose_file
   start_umami
   configure_caddy

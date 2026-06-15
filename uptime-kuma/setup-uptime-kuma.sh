@@ -65,6 +65,9 @@ reset_env_vars() {
   UPTIME_KUMA_IMAGE=""
   UPTIME_KUMA_CONTAINER_NAME=""
   UPTIME_KUMA_TIMEZONE=""
+  UPTIME_KUMA_SYSTEM_USER=""
+  UPTIME_KUMA_SYSTEM_PASSWORD=""
+  UPTIME_KUMA_SYSTEM_SSH_PUB=""
   UPTIME_KUMA_CONFIGURE_CADDY=""
   UPTIME_KUMA_CADDY_OVERWRITE_DOMAIN=""
   CADDYFILE=""
@@ -86,6 +89,9 @@ load_env() {
   UPTIME_KUMA_IMAGE="${UPTIME_KUMA_IMAGE:-louislam/uptime-kuma:2}"
   UPTIME_KUMA_CONTAINER_NAME="${UPTIME_KUMA_CONTAINER_NAME:-uptime-kuma}"
   UPTIME_KUMA_TIMEZONE="${UPTIME_KUMA_TIMEZONE:-UTC}"
+  UPTIME_KUMA_SYSTEM_USER="${UPTIME_KUMA_SYSTEM_USER:-}"
+  UPTIME_KUMA_SYSTEM_PASSWORD="${UPTIME_KUMA_SYSTEM_PASSWORD:-}"
+  UPTIME_KUMA_SYSTEM_SSH_PUB="${UPTIME_KUMA_SYSTEM_SSH_PUB:-}"
   UPTIME_KUMA_CONFIGURE_CADDY="${UPTIME_KUMA_CONFIGURE_CADDY:-true}"
   UPTIME_KUMA_CADDY_OVERWRITE_DOMAIN="${UPTIME_KUMA_CADDY_OVERWRITE_DOMAIN:-ask}"
   CADDYFILE="${CADDYFILE:-/etc/caddy/Caddyfile}"
@@ -106,6 +112,14 @@ validate_bool() {
   [[ "$value" == "true" || "$value" == "false" ]] || fail "Boolean value must be true or false"
 }
 
+validate_system_user_env() {
+  [[ -z "$UPTIME_KUMA_SYSTEM_USER" ]] && return
+  [[ "$UPTIME_KUMA_SYSTEM_USER" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] || fail "UPTIME_KUMA_SYSTEM_USER must be a valid Linux user name"
+  [[ "$UPTIME_KUMA_SYSTEM_USER" != "root" ]] || fail "UPTIME_KUMA_SYSTEM_USER must not be root"
+  [[ "$UPTIME_KUMA_SYSTEM_PASSWORD" != *:* ]] || fail "UPTIME_KUMA_SYSTEM_PASSWORD must not contain a colon"
+  [[ "$UPTIME_KUMA_SYSTEM_PASSWORD" != *$'\n'* ]] || fail "UPTIME_KUMA_SYSTEM_PASSWORD must not contain a newline"
+}
+
 validate_env() {
   [[ "$UPTIME_KUMA_URL" =~ ^https?://[^/]+/?$ ]] || fail "UPTIME_KUMA_URL must be a full site URL, for example https://status.example.com"
   [[ "$UPTIME_KUMA_PORT" =~ ^[0-9]+$ ]] || fail "UPTIME_KUMA_PORT must be numeric"
@@ -113,6 +127,26 @@ validate_env() {
   [[ "$UPTIME_KUMA_BIND_IP" =~ ^[A-Za-z0-9_.:-]+$ ]] || fail "UPTIME_KUMA_BIND_IP contains unsupported characters"
   validate_bool "$UPTIME_KUMA_CONFIGURE_CADDY"
   [[ "$UPTIME_KUMA_CADDY_OVERWRITE_DOMAIN" == "ask" || "$UPTIME_KUMA_CADDY_OVERWRITE_DOMAIN" == "true" || "$UPTIME_KUMA_CADDY_OVERWRITE_DOMAIN" == "false" ]] || fail "UPTIME_KUMA_CADDY_OVERWRITE_DOMAIN must be ask, true, or false"
+  validate_system_user_env
+}
+
+service_user_enabled() {
+  [[ -n "${UPTIME_KUMA_SYSTEM_USER:-}" ]]
+}
+
+service_user_home() {
+  local home
+  home="$(getent passwd "$UPTIME_KUMA_SYSTEM_USER" | cut -d: -f6)"
+  [[ -n "$home" ]] || home="/home/$UPTIME_KUMA_SYSTEM_USER"
+  printf '%s\n' "$home"
+}
+
+run_as_service_user() {
+  if service_user_enabled; then
+    runuser -u "$UPTIME_KUMA_SYSTEM_USER" -- env HOME="$(service_user_home)" "$@"
+  else
+    "$@"
+  fi
 }
 
 uptime_kuma_host() {
@@ -269,6 +303,51 @@ install_docker() {
   systemctl enable --now docker
 }
 
+create_or_update_service_user() {
+  service_user_enabled || return
+  require_cmd runuser
+
+  local ssh_dir auth_keys
+
+  if id "$UPTIME_KUMA_SYSTEM_USER" >/dev/null 2>&1; then
+    log "Service user already exists: $UPTIME_KUMA_SYSTEM_USER"
+  else
+    log "Creating service user: $UPTIME_KUMA_SYSTEM_USER"
+    adduser --disabled-password --gecos "" "$UPTIME_KUMA_SYSTEM_USER"
+  fi
+
+  if [[ -n "$UPTIME_KUMA_SYSTEM_PASSWORD" ]]; then
+    log "Updating password for service user: $UPTIME_KUMA_SYSTEM_USER"
+    printf '%s:%s\n' "$UPTIME_KUMA_SYSTEM_USER" "$UPTIME_KUMA_SYSTEM_PASSWORD" | chpasswd
+  fi
+
+  getent group docker >/dev/null 2>&1 || groupadd docker
+  usermod -aG docker "$UPTIME_KUMA_SYSTEM_USER"
+
+  if [[ -n "${UPTIME_KUMA_SYSTEM_SSH_PUB:-}" ]]; then
+    ssh_dir="$(service_user_home)/.ssh"
+    auth_keys="$ssh_dir/authorized_keys"
+
+    install -d -m 0700 "$ssh_dir"
+    chown "$UPTIME_KUMA_SYSTEM_USER:" "$ssh_dir"
+    touch "$auth_keys"
+    chmod 0600 "$auth_keys"
+    chown "$UPTIME_KUMA_SYSTEM_USER:" "$auth_keys"
+
+    if ! grep -Fqx "$UPTIME_KUMA_SYSTEM_SSH_PUB" "$auth_keys"; then
+      log "Adding SSH public key for $UPTIME_KUMA_SYSTEM_USER"
+      printf '%s\n' "$UPTIME_KUMA_SYSTEM_SSH_PUB" >> "$auth_keys"
+      chown "$UPTIME_KUMA_SYSTEM_USER:" "$auth_keys"
+    else
+      log "SSH public key is already present for $UPTIME_KUMA_SYSTEM_USER"
+    fi
+  fi
+
+  if ! run_as_service_user docker info >/dev/null 2>&1; then
+    fail "Service user $UPTIME_KUMA_SYSTEM_USER cannot access Docker. Check docker group membership and Docker socket permissions."
+  fi
+}
+
 write_compose_file() {
   log "Writing Docker Compose file: $UPTIME_KUMA_INSTALL_DIR/docker-compose.yml"
   install -d -m 0755 "$UPTIME_KUMA_INSTALL_DIR"
@@ -289,12 +368,16 @@ services:
 volumes:
   uptime-kuma-data:
 EOF
+
+  if service_user_enabled; then
+    chown -R "$UPTIME_KUMA_SYSTEM_USER:" "$UPTIME_KUMA_INSTALL_DIR"
+  fi
 }
 
 start_uptime_kuma() {
   log "Starting Uptime Kuma"
-  docker compose -f "$UPTIME_KUMA_INSTALL_DIR/docker-compose.yml" pull
-  docker compose -f "$UPTIME_KUMA_INSTALL_DIR/docker-compose.yml" up -d
+  run_as_service_user docker compose -f "$UPTIME_KUMA_INSTALL_DIR/docker-compose.yml" pull
+  run_as_service_user docker compose -f "$UPTIME_KUMA_INSTALL_DIR/docker-compose.yml" up -d
 }
 
 managed_caddy_block() {
@@ -430,6 +513,7 @@ main() {
   validate_env
   preflight_caddy
   install_docker
+  create_or_update_service_user
   write_compose_file
   start_uptime_kuma
   configure_caddy

@@ -38,6 +38,20 @@ Umami listens locally on `UMAMI_BIND_IP:UMAMI_PORT`; Caddy serves the public `UM
 
 Use only letters, digits, dots, underscores, dashes, and equals signs in `UMAMI_DB_PASSWORD` and `UMAMI_APP_SECRET`.
 
+## Service User
+
+By default, Docker Compose operations run as root. To run them as a dedicated Linux user, set:
+
+```env
+UMAMI_SYSTEM_USER=umamiadmin
+UMAMI_SYSTEM_PASSWORD=changeMeSystemPassword
+UMAMI_SYSTEM_SSH_PUB=""
+```
+
+When `UMAMI_SYSTEM_USER` is set, setup creates or reuses that user, adds it to the `docker` group, gives it `/opt/umami`, and runs Docker Compose as that user.
+
+Details: [../wiki/service-users.md](../wiki/service-users.md)
+
 ## Caddy Domain Conflicts
 
 If `UMAMI_URL` already exists in `/etc/caddy/Caddyfile`, the setup script checks the existing block.

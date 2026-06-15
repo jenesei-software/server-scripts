@@ -38,6 +38,20 @@ The script installs Docker Engine, Docker Compose plugin, writes `/opt/netdata/d
 
 Netdata listens locally on `NETDATA_BIND_IP:NETDATA_PORT`; Caddy serves the public `NETDATA_URL`.
 
+## Service User
+
+By default, Docker Compose operations run as root. To run them as a dedicated Linux user, set:
+
+```env
+NETDATA_SYSTEM_USER=netdataadmin
+NETDATA_SYSTEM_PASSWORD=changeMeSystemPassword
+NETDATA_SYSTEM_SSH_PUB=""
+```
+
+When `NETDATA_SYSTEM_USER` is set, setup creates or reuses that user, adds it to the `docker` group, gives it `/opt/netdata`, and runs Docker Compose as that user.
+
+Details: [../wiki/service-users.md](../wiki/service-users.md)
+
 ## Caddy Basic Auth
 
 Netdata does not have an app login in this setup, so Caddy basic auth is enabled by default:

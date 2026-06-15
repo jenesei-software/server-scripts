@@ -65,6 +65,9 @@ reset_env_vars() {
   NETDATA_BIND_IP=""
   NETDATA_PORT=""
   NETDATA_CONTAINER_NAME=""
+  NETDATA_SYSTEM_USER=""
+  NETDATA_SYSTEM_PASSWORD=""
+  NETDATA_SYSTEM_SSH_PUB=""
   NETDATA_CONFIGURE_CADDY=""
   NETDATA_BASIC_AUTH_ENABLED=""
   CADDYFILE=""
@@ -89,6 +92,7 @@ load_env() {
   NETDATA_BIND_IP="${NETDATA_BIND_IP:-127.0.0.1}"
   NETDATA_PORT="${NETDATA_PORT:-19999}"
   NETDATA_CONTAINER_NAME="${NETDATA_CONTAINER_NAME:-netdata}"
+  NETDATA_SYSTEM_USER="${NETDATA_SYSTEM_USER:-}"
   NETDATA_CONFIGURE_CADDY="${NETDATA_CONFIGURE_CADDY:-true}"
   NETDATA_BASIC_AUTH_ENABLED="${NETDATA_BASIC_AUTH_ENABLED:-true}"
   CADDYFILE="${CADDYFILE:-/etc/caddy/Caddyfile}"
@@ -108,6 +112,34 @@ check_service_active() {
     ok "Service $service: active"
   else
     err "Service $service: NOT active"
+  fi
+}
+
+service_user_enabled() {
+  [[ -n "${NETDATA_SYSTEM_USER:-}" ]]
+}
+
+check_service_user() {
+  section "Service user"
+  if ! service_user_enabled; then
+    info "NETDATA_SYSTEM_USER is empty; Docker Compose operations are run as root"
+    return
+  fi
+
+  if id "$NETDATA_SYSTEM_USER" >/dev/null 2>&1; then
+    ok "Service user exists: $NETDATA_SYSTEM_USER"
+  else
+    err "Service user is missing: $NETDATA_SYSTEM_USER"
+    return
+  fi
+
+  id -nG "$NETDATA_SYSTEM_USER" | tr ' ' '\n' | grep -qx docker && ok "Service user is in docker group" || err "Service user is not in docker group"
+  [[ -d "$NETDATA_INSTALL_DIR" ]] && [[ "$(stat -c '%U' "$NETDATA_INSTALL_DIR")" == "$NETDATA_SYSTEM_USER" ]] && ok "Install directory is owned by $NETDATA_SYSTEM_USER" || warn "Install directory is not owned by $NETDATA_SYSTEM_USER"
+
+  if runuser -u "$NETDATA_SYSTEM_USER" -- docker info >/dev/null 2>&1; then
+    ok "Service user can access Docker"
+  else
+    err "Service user cannot access Docker"
   fi
 }
 
@@ -242,6 +274,7 @@ main() {
   require_root
   load_env
   check_system
+  check_service_user
   check_repository
   check_compose
   check_netdata

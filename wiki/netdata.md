@@ -111,6 +111,20 @@ https://server.cyrilstrone.com
 
 Log in with `NETDATA_BASIC_AUTH_USER` and `NETDATA_BASIC_AUTH_PASSWORD`.
 
+## Service User
+
+By default, Docker Compose operations run as root. To run them as a dedicated Linux user, set:
+
+```env
+NETDATA_SYSTEM_USER=netdataadmin
+NETDATA_SYSTEM_PASSWORD=changeMeSystemPassword
+NETDATA_SYSTEM_SSH_PUB=""
+```
+
+When `NETDATA_SYSTEM_USER` is set, setup creates or reuses that user, adds it to the `docker` group, gives it `/opt/netdata`, and runs Docker Compose as that user.
+
+Details: [service-users.md](service-users.md)
+
 ## Caddy Basic Auth
 
 Netdata has no app login in this setup, so Caddy basic auth is enabled by default:

@@ -108,6 +108,20 @@ https://status.cyrilstrone.com
 
 Create the first Uptime Kuma admin account.
 
+## Service User
+
+By default, Docker Compose operations run as root. To run them as a dedicated Linux user, set:
+
+```env
+UPTIME_KUMA_SYSTEM_USER=uptimeadmin
+UPTIME_KUMA_SYSTEM_PASSWORD=changeMeSystemPassword
+UPTIME_KUMA_SYSTEM_SSH_PUB=""
+```
+
+When `UPTIME_KUMA_SYSTEM_USER` is set, setup creates or reuses that user, adds it to the `docker` group, gives it `/opt/uptime-kuma`, and runs Docker Compose as that user.
+
+Details: [service-users.md](service-users.md)
+
 ## Domain Conflict Behavior
 
 If `UPTIME_KUMA_URL` uses a domain that is already present in `/etc/caddy/Caddyfile`:

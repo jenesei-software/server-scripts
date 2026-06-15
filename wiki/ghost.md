@@ -90,6 +90,8 @@ GHOST_DB_PASSWORD=change_me_ghost_db_password
 `GHOST_SYSTEM_USER` must not be `root` or `ghost`.
 `GHOST_STAFF_DEVICE_VERIFICATION=false` disables Ghost's staff email verification code for new devices, which is useful when transactional email is not configured yet.
 
+See also: [service-users.md](service-users.md)
+
 ## Run
 
 Install Caddy first:
