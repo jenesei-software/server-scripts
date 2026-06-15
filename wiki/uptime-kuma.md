@@ -82,15 +82,7 @@ Required value:
 UPTIME_KUMA_URL=https://status.cyrilstrone.com
 ```
 
-Optional Caddy basic auth:
-
-```env
-UPTIME_KUMA_BASIC_AUTH_ENABLED=true
-UPTIME_KUMA_BASIC_AUTH_USER=admin
-UPTIME_KUMA_BASIC_AUTH_PASSWORD=change_me_status_password
-```
-
-Uptime Kuma has its own admin login after first setup, so Caddy basic auth is disabled by default.
+Uptime Kuma asks you to create its own admin account after the first setup.
 
 ## Run
 

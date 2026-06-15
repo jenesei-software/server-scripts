@@ -66,9 +66,6 @@ reset_env_vars() {
   UPTIME_KUMA_CONTAINER_NAME=""
   UPTIME_KUMA_TIMEZONE=""
   UPTIME_KUMA_CONFIGURE_CADDY=""
-  UPTIME_KUMA_BASIC_AUTH_ENABLED=""
-  UPTIME_KUMA_BASIC_AUTH_USER=""
-  UPTIME_KUMA_BASIC_AUTH_PASSWORD=""
   UPTIME_KUMA_CADDY_OVERWRITE_DOMAIN=""
   CADDYFILE=""
 }
@@ -90,8 +87,6 @@ load_env() {
   UPTIME_KUMA_CONTAINER_NAME="${UPTIME_KUMA_CONTAINER_NAME:-uptime-kuma}"
   UPTIME_KUMA_TIMEZONE="${UPTIME_KUMA_TIMEZONE:-UTC}"
   UPTIME_KUMA_CONFIGURE_CADDY="${UPTIME_KUMA_CONFIGURE_CADDY:-true}"
-  UPTIME_KUMA_BASIC_AUTH_ENABLED="${UPTIME_KUMA_BASIC_AUTH_ENABLED:-false}"
-  UPTIME_KUMA_BASIC_AUTH_USER="${UPTIME_KUMA_BASIC_AUTH_USER:-admin}"
   UPTIME_KUMA_CADDY_OVERWRITE_DOMAIN="${UPTIME_KUMA_CADDY_OVERWRITE_DOMAIN:-ask}"
   CADDYFILE="${CADDYFILE:-/etc/caddy/Caddyfile}"
 }
@@ -117,12 +112,7 @@ validate_env() {
   (( UPTIME_KUMA_PORT >= 1024 && UPTIME_KUMA_PORT <= 65535 )) || fail "UPTIME_KUMA_PORT must be between 1024 and 65535"
   [[ "$UPTIME_KUMA_BIND_IP" =~ ^[A-Za-z0-9_.:-]+$ ]] || fail "UPTIME_KUMA_BIND_IP contains unsupported characters"
   validate_bool "$UPTIME_KUMA_CONFIGURE_CADDY"
-  validate_bool "$UPTIME_KUMA_BASIC_AUTH_ENABLED"
   [[ "$UPTIME_KUMA_CADDY_OVERWRITE_DOMAIN" == "ask" || "$UPTIME_KUMA_CADDY_OVERWRITE_DOMAIN" == "true" || "$UPTIME_KUMA_CADDY_OVERWRITE_DOMAIN" == "false" ]] || fail "UPTIME_KUMA_CADDY_OVERWRITE_DOMAIN must be ask, true, or false"
-  if [[ "$UPTIME_KUMA_BASIC_AUTH_ENABLED" == "true" ]]; then
-    [[ -n "$UPTIME_KUMA_BASIC_AUTH_USER" ]] || fail "UPTIME_KUMA_BASIC_AUTH_USER is required when UPTIME_KUMA_BASIC_AUTH_ENABLED=true"
-    [[ -n "$UPTIME_KUMA_BASIC_AUTH_PASSWORD" ]] || fail "UPTIME_KUMA_BASIC_AUTH_PASSWORD is required when UPTIME_KUMA_BASIC_AUTH_ENABLED=true"
-  fi
 }
 
 uptime_kuma_host() {
@@ -307,28 +297,13 @@ start_uptime_kuma() {
   docker compose -f "$UPTIME_KUMA_INSTALL_DIR/docker-compose.yml" up -d
 }
 
-caddy_basic_auth_block() {
-  [[ "$UPTIME_KUMA_BASIC_AUTH_ENABLED" == "true" ]] || return 0
-
-  local password_hash
-  password_hash="$(caddy hash-password --plaintext "$UPTIME_KUMA_BASIC_AUTH_PASSWORD")"
-  cat <<EOF
-    basic_auth {
-        $UPTIME_KUMA_BASIC_AUTH_USER $password_hash
-    }
-EOF
-}
-
 managed_caddy_block() {
   local host="$1"
-  local auth_block
-  auth_block="$(caddy_basic_auth_block)"
 
   cat <<EOF
 $CADDY_MANAGED_PREFIX $host
 $host {
     encode zstd gzip
-$auth_block
     reverse_proxy ${UPTIME_KUMA_BIND_IP}:${UPTIME_KUMA_PORT}
 }
 $CADDY_MANAGED_SUFFIX $host

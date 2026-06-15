@@ -66,7 +66,6 @@ reset_env_vars() {
   UPTIME_KUMA_PORT=""
   UPTIME_KUMA_CONTAINER_NAME=""
   UPTIME_KUMA_CONFIGURE_CADDY=""
-  UPTIME_KUMA_BASIC_AUTH_ENABLED=""
   CADDYFILE=""
 }
 
@@ -90,7 +89,6 @@ load_env() {
   UPTIME_KUMA_PORT="${UPTIME_KUMA_PORT:-3001}"
   UPTIME_KUMA_CONTAINER_NAME="${UPTIME_KUMA_CONTAINER_NAME:-uptime-kuma}"
   UPTIME_KUMA_CONFIGURE_CADDY="${UPTIME_KUMA_CONFIGURE_CADDY:-true}"
-  UPTIME_KUMA_BASIC_AUTH_ENABLED="${UPTIME_KUMA_BASIC_AUTH_ENABLED:-false}"
   CADDYFILE="${CADDYFILE:-/etc/caddy/Caddyfile}"
 }
 
@@ -213,10 +211,6 @@ check_caddy() {
       ok "Managed Uptime Kuma Caddy block is present"
     else
       warn "Uptime Kuma host exists without managed marker, or is managed manually"
-    fi
-
-    if [[ "$UPTIME_KUMA_BASIC_AUTH_ENABLED" == "true" ]]; then
-      grep -Fq "basic_auth" "$CADDYFILE" && ok "Caddy basic auth is configured" || warn "Caddy basic auth was expected but not found"
     fi
   fi
 }
