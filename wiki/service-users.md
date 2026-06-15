@@ -26,6 +26,8 @@ Docker-based modules can run Docker Compose operations as a dedicated service us
 * `uptime-kuma/`
 * `netdata/`
 * `supabase/`
+* `remnawave-panel/`
+* `remnawave-node/`
 
 Example:
 
@@ -52,6 +54,20 @@ The check script reports:
 * whether the user is in the `docker` group
 * whether the install directory is owned by the user
 * whether the user can access Docker
+
+Remnawave uses the same Docker service-user pattern:
+
+```env
+REMNAWAVE_PANEL_SYSTEM_USER=remnawaveadmin
+REMNAWAVE_PANEL_SYSTEM_PASSWORD=changeMeSystemPassword
+REMNAWAVE_PANEL_SYSTEM_SSH_PUB=""
+```
+
+```env
+REMNAWAVE_NODE_SYSTEM_USER=remnanodeadmin
+REMNAWAVE_NODE_SYSTEM_PASSWORD=changeMeSystemPassword
+REMNAWAVE_NODE_SYSTEM_SSH_PUB=""
+```
 
 ## Existing Users
 

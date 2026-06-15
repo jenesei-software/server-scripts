@@ -49,6 +49,17 @@ Service user model: [wiki/service-users.md](wiki/service-users.md)
 |   |-- README.md
 |   |-- check-setup.sh
 |   `-- setup-netdata.sh
+|-- remnawave-node/
+|   |-- env.example
+|   |-- README.md
+|   |-- check-setup.sh
+|   `-- setup-remnawave-node.sh
+|-- remnawave-panel/
+|   |-- env.example
+|   |-- README.md
+|   |-- check-setup.sh
+|   |-- setup-remnawave-panel.sh
+|   `-- setup-subscription-page.sh
 |-- supabase/
 |   |-- env.example
 |   |-- README.md
@@ -73,6 +84,8 @@ Service user model: [wiki/service-users.md](wiki/service-users.md)
     |-- caddy.md
     |-- ghost.md
     |-- netdata.md
+    |-- remnawave-node.md
+    |-- remnawave-panel.md
     |-- service-users.md
     |-- supabase.md
     |-- uptime-kuma.md
@@ -168,6 +181,47 @@ Default public URL: `https://server.cyrilstrone.com`
 
 Documentation: [wiki/netdata.md](wiki/netdata.md)
 
+### `remnawave-panel/`
+
+One Remnawave Panel instance and bundled subscription page behind Caddy.
+
+Use only `remnawave-panel/.env`:
+
+```bash
+cd ~/server-scripts/remnawave-panel
+cp env.example .env
+nano .env
+bash setup-remnawave-panel.sh
+```
+
+After creating the first Remnawave admin and API token, run:
+
+```bash
+cd ~/server-scripts/remnawave-panel
+bash setup-subscription-page.sh
+bash check-setup.sh
+```
+
+Documentation: [wiki/remnawave-panel.md](wiki/remnawave-panel.md)
+
+### `remnawave-node/`
+
+One Remnawave Node with Docker and direct node ports.
+
+Use only `remnawave-node/.env`:
+
+```bash
+cd ~/server-scripts/remnawave-node
+cp env.example .env
+nano .env
+bash setup-remnawave-node.sh
+bash check-setup.sh
+```
+
+Remnawave Node is not Caddy-managed. It uses `network_mode: host` and listens directly on `PORT_NODE`.
+
+Documentation: [wiki/remnawave-node.md](wiki/remnawave-node.md)
+
 ### `supabase/`
 
 One self-hosted Supabase project behind Caddy.
@@ -222,6 +276,10 @@ The Uptime Kuma module does not open public ports directly. Uptime Kuma listens 
 The Netdata module does not open public ports directly. Netdata listens on a local port, and Caddy proxies public HTTP/HTTPS traffic to it. Netdata is protected with Caddy basic auth by default.
 
 The Supabase module does not open public ports directly. Supabase Kong and Supavisor are bound to local IP addresses by default, and Caddy proxies public HTTP/HTTPS traffic to Kong.
+
+The Remnawave Panel module does not open public ports directly. Remnawave Panel and the bundled subscription page are bound to local IP addresses by default, and Caddy proxies public HTTP/HTTPS traffic to them.
+
+The Remnawave Node module opens `PORT_NODE/tcp`, every TCP port from `PORT_ARRAY_INBOUNDS`, and `80/tcp` plus `443/tcp` when `SERVER_DOMAIN` is set for certificate issuance. Caddy is not used by this module.
 
 The Caddy module installs UFW if needed and adds the HTTP/HTTPS rules. It does not force-enable UFW by itself, because enabling a firewall from an isolated Caddy script could affect SSH access on servers that did not run the Ubuntu module first.
 
