@@ -205,9 +205,9 @@ WEB_AUDIT_DEFAULT_TEST=all
 WEB_AUDIT_NODE_MAJOR=22
 WEB_AUDIT_CHROME_PATH=""
 WEB_AUDIT_LHCI_VERSION=latest
-WEB_AUDIT_LHCI_RUNS=1
+WEB_AUDIT_LHCI_RUNS=3
 WEB_AUDIT_LHCI_CHROME_FLAGS="--no-sandbox --disable-dev-shm-usage --disable-gpu --disable-setuid-sandbox"
-WEB_AUDIT_LHCI_TIMEOUT=5m
+WEB_AUDIT_LHCI_TIMEOUT=10m
 WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD=45000
 WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP=30000
 WEB_AUDIT_SITESPEED_IMAGE=sitespeedio/sitespeed.io:41.3.3
@@ -224,14 +224,14 @@ WEB_AUDIT_STOP_DOCKER_AFTER_RUN=true
 
 ## Timeouts
 
-Lighthouse should not run for tens of minutes on one page. The module uses two layers of protection:
+One Lighthouse pass should not run indefinitely. The module uses two layers of protection:
 
 * `WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD` and `WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP` are passed into Lighthouse settings in milliseconds.
-* `WEB_AUDIT_LHCI_TIMEOUT` wraps each `lhci collect` and `lhci upload` command.
+* `WEB_AUDIT_LHCI_TIMEOUT` wraps each individual Lighthouse run and the `lhci upload` command. With `WEB_AUDIT_LHCI_RUNS=3` and `WEB_AUDIT_LHCI_TIMEOUT=10m`, every run gets its own 10 minute limit.
 * Before running Lighthouse, the script starts Chrome in headless mode with a 30 second smoke test.
 * During `lhci collect`, the script forces temporary Chrome and LHCI files into a Linux `/tmp/web-audits-lhci-*` directory. This avoids WSL creating `C:\Users\...` profile directories inside the report folder.
 
-After `lhci collect`, the script requires at least one saved LHR file before running `lhci upload`. If Lighthouse times out and saves zero reports, the run fails immediately instead of creating an empty `manifest.json`.
+The script runs `lhci collect` one Lighthouse pass at a time and uses LHCI additive mode after the first pass, so all runs are saved into the same report set. After collection, it requires the expected number of saved LHR files before running `lhci upload`. If Lighthouse times out and saves too few reports, the run fails immediately instead of creating an empty `manifest.json`.
 
 If the log stops around `Run #1...` and then shows `Unable to connect to Chrome`, check that the server is using Linux Node.js and Linux Chrome, not Windows `node.exe` or Windows Chrome from WSL. The report log usually exposes this through paths like `/mnt/c/Users/.../lighthouse...`.
 

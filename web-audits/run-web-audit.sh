@@ -233,7 +233,7 @@ load_env() {
   WEB_AUDIT_LHCI_VERSION="${WEB_AUDIT_LHCI_VERSION:-latest}"
   WEB_AUDIT_LHCI_RUNS="${WEB_AUDIT_LHCI_RUNS:-1}"
   WEB_AUDIT_LHCI_CHROME_FLAGS="${WEB_AUDIT_LHCI_CHROME_FLAGS:---no-sandbox --disable-dev-shm-usage --disable-gpu --disable-setuid-sandbox}"
-  WEB_AUDIT_LHCI_TIMEOUT="${WEB_AUDIT_LHCI_TIMEOUT:-5m}"
+  WEB_AUDIT_LHCI_TIMEOUT="${WEB_AUDIT_LHCI_TIMEOUT:-10m}"
   WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD="${WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD:-45000}"
   WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP="${WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP:-30000}"
   WEB_AUDIT_SITESPEED_IMAGE="${WEB_AUDIT_SITESPEED_IMAGE:-sitespeedio/sitespeed.io:41.3.3}"
@@ -261,10 +261,18 @@ validate_positive_int() {
   (( value >= 1 )) || fail "$name must be greater than zero"
 }
 
+validate_timeout() {
+  local name="$1"
+  local value="$2"
+
+  [[ "$value" =~ ^[0-9]+[smhd]?$ ]] || fail "$name must be a timeout like 600, 10m, or 1h"
+}
+
 validate_env() {
   [[ "$WEB_AUDIT_DEFAULT_TEST" == "all" || "$WEB_AUDIT_DEFAULT_TEST" == "lighthouse" || "$WEB_AUDIT_DEFAULT_TEST" == "sitespeed" ]] || fail "WEB_AUDIT_DEFAULT_TEST must be all, lighthouse, or sitespeed"
   [[ "$WEB_AUDIT_NODE_MAJOR" =~ ^[0-9]+$ ]] || fail "WEB_AUDIT_NODE_MAJOR must be numeric"
   validate_positive_int WEB_AUDIT_LHCI_RUNS "$WEB_AUDIT_LHCI_RUNS"
+  validate_timeout WEB_AUDIT_LHCI_TIMEOUT "$WEB_AUDIT_LHCI_TIMEOUT"
   validate_positive_int WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD "$WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD"
   validate_positive_int WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP "$WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP"
   validate_positive_int WEB_AUDIT_SITESPEED_RUNS "$WEB_AUDIT_SITESPEED_RUNS"
@@ -574,7 +582,7 @@ preflight_lighthouse() {
   log "Chrome: $("$chrome_path" --version)"
   log "Chrome path: $chrome_path"
   log "Lighthouse CI: $("${LHCI_CMD[@]}" --version)"
-  log "Lighthouse runs: $WEB_AUDIT_LHCI_RUNS, command timeout: $WEB_AUDIT_LHCI_TIMEOUT"
+  log "Lighthouse runs: $WEB_AUDIT_LHCI_RUNS, timeout per run: $WEB_AUDIT_LHCI_TIMEOUT"
   log "Checking headless Chrome startup"
 
   timeout --foreground 30s "$chrome_path" \
@@ -620,7 +628,10 @@ prepare_lhci_runtime() {
 }
 
 run_lhci_with_timeout() {
-  timeout --foreground "$WEB_AUDIT_LHCI_TIMEOUT" env \
+  local command_timeout="$1"
+  shift
+
+  timeout --foreground "$command_timeout" env \
     TMPDIR="$LHCI_RUNTIME_DIR/tmp" \
     TMP="$LHCI_RUNTIME_DIR/tmp" \
     TEMP="$LHCI_RUNTIME_DIR/tmp" \
@@ -789,7 +800,6 @@ write_lhci_config() {
 
   node_path="$(find_linux_command node)" || fail "Linux Node.js command was not found"
   TEST_URL="$TEST_URL" \
-  WEB_AUDIT_LHCI_RUNS="$WEB_AUDIT_LHCI_RUNS" \
   WEB_AUDIT_LHCI_CHROME_FLAGS="$WEB_AUDIT_LHCI_CHROME_FLAGS" \
   WEB_AUDIT_LHCI_CHROME_USER_DATA_DIR="${LHCI_RUNTIME_DIR:-}/chrome-profile" \
   WEB_AUDIT_CHROME_PATH="$WEB_AUDIT_CHROME_PATH" \
@@ -808,7 +818,7 @@ const config = {
   ci: {
     collect: {
       url: [process.env.TEST_URL],
-      numberOfRuns: Number(process.env.WEB_AUDIT_LHCI_RUNS || 1),
+      numberOfRuns: 1,
       chromePath: process.env.WEB_AUDIT_CHROME_PATH,
       settings: {
         chromeFlags,
@@ -833,6 +843,8 @@ run_lighthouse_ci() {
   local log_file="$LOG_DIR/lighthouse-ci.log"
   local lhci_status
   local saved_report_count
+  local run_number
+  local collect_args=()
 
   install_node_if_missing
   install_chrome_if_missing
@@ -849,19 +861,27 @@ run_lighthouse_ci() {
     cd "$target_dir"
     printf 'LHCI runtime directory: %s\n' "$LHCI_RUNTIME_DIR"
 
-    if ! run_lhci_with_timeout collect --config=lighthouserc.json; then
-      printf 'Lighthouse CI collect failed or timed out after %s.\n' "$WEB_AUDIT_LHCI_TIMEOUT"
-      exit 1
-    fi
+    for (( run_number = 1; run_number <= WEB_AUDIT_LHCI_RUNS; run_number++ )); do
+      printf 'Lighthouse run %s/%s timeout: %s\n' "$run_number" "$WEB_AUDIT_LHCI_RUNS" "$WEB_AUDIT_LHCI_TIMEOUT"
+      collect_args=(collect --config=lighthouserc.json)
+      if (( run_number > 1 )); then
+        collect_args+=(--additive)
+      fi
+
+      if ! run_lhci_with_timeout "$WEB_AUDIT_LHCI_TIMEOUT" "${collect_args[@]}"; then
+        printf 'Lighthouse CI collect run %s/%s failed or timed out after %s.\n' "$run_number" "$WEB_AUDIT_LHCI_RUNS" "$WEB_AUDIT_LHCI_TIMEOUT"
+        exit 1
+      fi
+    done
 
     remove_wsl_chrome_launcher_dirs "$target_dir"
     saved_report_count="$(count_saved_lhci_reports "$target_dir")"
-    if (( saved_report_count < 1 )); then
-      printf 'Lighthouse CI collect finished, but saved 0 LHR files in %s/.lighthouseci.\n' "$target_dir"
+    if (( saved_report_count < WEB_AUDIT_LHCI_RUNS )); then
+      printf 'Lighthouse CI collect finished, but saved only %s/%s LHR files in %s/.lighthouseci.\n' "$saved_report_count" "$WEB_AUDIT_LHCI_RUNS" "$target_dir"
       exit 1
     fi
 
-    if ! run_lhci_with_timeout upload --config=lighthouserc.json; then
+    if ! run_lhci_with_timeout "$WEB_AUDIT_LHCI_TIMEOUT" upload --config=lighthouserc.json; then
       printf 'Lighthouse CI upload failed or timed out after %s.\n' "$WEB_AUDIT_LHCI_TIMEOUT"
       exit 1
     fi
@@ -871,7 +891,7 @@ run_lighthouse_ci() {
 
   remove_wsl_chrome_launcher_dirs "$target_dir"
   if (( lhci_status != 0 )); then
-    fail "Lighthouse CI failed or timed out after $WEB_AUDIT_LHCI_TIMEOUT. See log: $log_file"
+    fail "Lighthouse CI failed or timed out. Each Lighthouse run has timeout $WEB_AUDIT_LHCI_TIMEOUT. See log: $log_file"
   fi
 
   [[ -f "$target_dir/reports/manifest.json" ]] || fail "Lighthouse CI report manifest was not created: $target_dir/reports/manifest.json"
