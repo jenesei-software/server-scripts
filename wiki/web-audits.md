@@ -14,6 +14,7 @@ References:
 ```text
 web-audits/
 |-- env.example
+|-- build-reports-dashboard.sh
 |-- run-web-audit.sh
 `-- check-setup.sh
 ```
@@ -195,6 +196,42 @@ If `WEB_AUDIT_CREATE_ZIP=true`, the script also creates:
 web-audits/reports/<site>/<timestamp>.zip
 ```
 
+## Aggregate Report
+
+Build one dashboard from all saved report folders:
+
+```bash
+cd ~/server-scripts-web-audits/web-audits
+bash build-reports-dashboard.sh
+```
+
+The default input directory is `web-audits/reports`. You can pass a custom folder with reports:
+
+```bash
+bash build-reports-dashboard.sh /path/to/web-audits-reports
+```
+
+You can also choose a custom output folder:
+
+```bash
+bash build-reports-dashboard.sh /path/to/web-audits-reports /path/to/output/web-audits-dashboard
+```
+
+The script writes:
+
+```text
+aggregate-reports/<timestamp>/
+|-- index.html
+|-- summary.txt
+`-- summary.json
+```
+
+`index.html` is the main dashboard. It contains overall charts, latest results by domain, performance trend by domain, per-server sections, and a full run table. The per-server grouping uses `metadata.json` values from `auditSource.hostname` and `auditSource.publicIp`.
+
+`summary.txt` contains the same key results in plain text for terminal review. `summary.json` contains normalized data for later processing.
+
+The aggregate report needs only Node.js. It does not use Docker and does not need `sudo`.
+
 ## Env
 
 Copy this from `env.example` into `.env` and edit `.env`:
@@ -296,6 +333,13 @@ Download all reports:
 
 ```powershell
 scp -r SSH_USER@SERVER_IP:/path/to/server-scripts/web-audits/reports C:\Users\YOUR_USER\Downloads\web-audits-reports
+```
+
+Build an aggregate dashboard from the downloaded reports through WSL:
+
+```bash
+cd /mnt/e/git-library/jenesei-software/server-scripts/web-audits
+bash build-reports-dashboard.sh /mnt/c/Users/YOUR_USER/Downloads/web-audits-reports
 ```
 
 WinSCP path:
