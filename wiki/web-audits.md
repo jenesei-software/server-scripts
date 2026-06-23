@@ -41,6 +41,7 @@ For Lighthouse CI without `sudo`, the user needs:
 * `jq`, `zip`, `tar`, and `curl` already installed
 
 The script installs `@lhci/cli` locally into `web-audits/.tools/`, so global `npm install -g` is not required.
+If Node.js is installed through Unix nvm, the scripts try to source `~/.nvm/nvm.sh` before checking `node` and `npm`.
 
 For sitespeed.io without `sudo`, the user needs:
 

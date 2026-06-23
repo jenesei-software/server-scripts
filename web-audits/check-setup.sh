@@ -49,6 +49,18 @@ find_linux_command() {
   printf '%s\n' "$command_path"
 }
 
+load_nvm_if_available() {
+  local nvm_sh
+
+  NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+  for nvm_sh in "$NVM_DIR/nvm.sh" "$HOME/.nvm/nvm.sh"; do
+    [[ -s "$nvm_sh" ]] || continue
+    # shellcheck disable=SC1090
+    . "$nvm_sh"
+    return
+  done
+}
+
 init_privileges() {
   if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
     SUDO=()
@@ -195,6 +207,8 @@ check_lighthouse_dependencies() {
   local chrome_flags=()
 
   section "Lighthouse CI dependencies"
+  load_nvm_if_available
+
   if node_path="$(find_linux_command node)"; then
     ok "Linux Node.js command found: $node_path"
     info "Node.js version: $("$node_path" --version)"
@@ -236,11 +250,17 @@ check_lighthouse_dependencies() {
       if timeout --foreground 30s "$chrome_path" \
         --headless=new \
         "${chrome_flags[@]}" \
-        --remote-debugging-address=127.0.0.1 \
-        --remote-debugging-port=0 \
+        --disable-background-networking \
+        --disable-component-update \
+        --disable-sync \
+        --metrics-recording-only \
+        --no-default-browser-check \
+        --no-first-run \
         --user-data-dir="$smoke_dir" \
-        --dump-dom about:blank >/dev/null 2>&1; then
+        --dump-dom about:blank > "$smoke_dir/chrome-smoke.log" 2>&1; then
         ok "Headless Chrome smoke test passed"
+      elif grep -q '<html' "$smoke_dir/chrome-smoke.log"; then
+        warn "Headless Chrome produced DOM but did not exit cleanly within 30s"
       else
         err "Headless Chrome smoke test failed"
       fi

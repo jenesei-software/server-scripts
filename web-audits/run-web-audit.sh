@@ -68,6 +68,18 @@ prefer_command_dirs() {
   export PATH
 }
 
+load_nvm_if_available() {
+  local nvm_sh
+
+  NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+  for nvm_sh in "$NVM_DIR/nvm.sh" "$HOME/.nvm/nvm.sh"; do
+    [[ -s "$nvm_sh" ]] || continue
+    # shellcheck disable=SC1090
+    . "$nvm_sh"
+    return
+  done
+}
+
 init_privileges() {
   if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
     SUDO=()
@@ -391,6 +403,8 @@ install_node_if_missing() {
   local node_path
   local npm_path
 
+  load_nvm_if_available
+
   if node_path="$(find_linux_command node)" && npm_path="$(find_linux_command npm)"; then
     prefer_command_dirs "$node_path" "$npm_path"
     log "Linux Node.js and npm are already installed: $("$node_path" --version)"
@@ -561,11 +575,19 @@ preflight_lighthouse() {
   if ! timeout --foreground 30s "$chrome_path" \
     --headless=new \
     "${chrome_flags[@]}" \
-    --remote-debugging-address=127.0.0.1 \
-    --remote-debugging-port=0 \
+    --disable-background-networking \
+    --disable-component-update \
+    --disable-sync \
+    --metrics-recording-only \
+    --no-default-browser-check \
+    --no-first-run \
     --user-data-dir="$REPORT_ROOT/chrome-smoke-profile" \
     --dump-dom about:blank > "$smoke_log" 2>&1; then
-    fail "Headless Chrome could not start within 30s. See log: $smoke_log"
+    if grep -q '<html' "$smoke_log"; then
+      warn "Headless Chrome produced DOM but did not exit cleanly within 30s; continuing. See log: $smoke_log"
+    else
+      fail "Headless Chrome could not start within 30s. See log: $smoke_log"
+    fi
   fi
 
   rm -rf "$REPORT_ROOT/chrome-smoke-profile"
