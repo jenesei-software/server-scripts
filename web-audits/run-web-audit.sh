@@ -18,6 +18,10 @@ DOCKER_USED_IN_THIS_RUN=false
 DOCKER_WAS_ACTIVE_BEFORE_RUN=true
 REPORT_OWNER=""
 REPORT_GROUP=""
+REPORTS_NEED_CHOWN=false
+AUDIT_SOURCE_HOSTNAME=""
+AUDIT_SOURCE_PUBLIC_IP=""
+AUDIT_SOURCE_LOCAL_IPS=""
 
 LOG_COLOR='\033[1;36m'
 LOG_RESET='\033[0m'
@@ -33,6 +37,36 @@ log() { log_line "INFO" "$*"; }
 warn() { log_line "WARN" "$*"; }
 fail() { log_line "ERROR" "$*" >&2; exit 1; }
 require_cmd() { command -v "$1" >/dev/null 2>&1 || fail "Command not found: $1"; }
+is_windows_interop_path() { [[ "$1" == /mnt/c/* || "$1" == *.exe ]]; }
+
+find_linux_command() {
+  local command_name="$1"
+  local command_path
+  local fixed_path
+
+  for fixed_path in "/usr/local/bin/$command_name" "/usr/bin/$command_name" "/bin/$command_name"; do
+    if [[ -x "$fixed_path" ]] && ! is_windows_interop_path "$fixed_path"; then
+      printf '%s\n' "$fixed_path"
+      return 0
+    fi
+  done
+
+  command -v "$command_name" >/dev/null 2>&1 || return 1
+  command_path="$(command -v "$command_name")"
+  is_windows_interop_path "$command_path" && return 1
+
+  printf '%s\n' "$command_path"
+}
+
+prefer_command_dirs() {
+  local command_path
+
+  for command_path in "$@"; do
+    [[ -n "$command_path" ]] || continue
+    PATH="$(dirname -- "$command_path"):$PATH"
+  done
+  export PATH
+}
 
 init_privileges() {
   if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
@@ -40,6 +74,7 @@ init_privileges() {
     if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]] && id "$SUDO_USER" >/dev/null 2>&1; then
       REPORT_OWNER="$SUDO_USER"
       REPORT_GROUP="$(id -gn "$SUDO_USER")"
+      REPORTS_NEED_CHOWN=true
     fi
     return
   fi
@@ -175,10 +210,11 @@ load_env() {
   WEB_AUDIT_RESULTS_DIR="$(absolute_module_path "${WEB_AUDIT_RESULTS_DIR:-reports}")"
   WEB_AUDIT_DEFAULT_TEST="${WEB_AUDIT_DEFAULT_TEST:-all}"
   WEB_AUDIT_NODE_MAJOR="${WEB_AUDIT_NODE_MAJOR:-22}"
+  WEB_AUDIT_CHROME_PATH="${WEB_AUDIT_CHROME_PATH:-}"
   WEB_AUDIT_LHCI_VERSION="${WEB_AUDIT_LHCI_VERSION:-latest}"
-  WEB_AUDIT_LHCI_RUNS="${WEB_AUDIT_LHCI_RUNS:-3}"
-  WEB_AUDIT_LHCI_CHROME_FLAGS="${WEB_AUDIT_LHCI_CHROME_FLAGS:---headless=new --no-sandbox --disable-dev-shm-usage}"
-  WEB_AUDIT_LHCI_TIMEOUT="${WEB_AUDIT_LHCI_TIMEOUT:-10m}"
+  WEB_AUDIT_LHCI_RUNS="${WEB_AUDIT_LHCI_RUNS:-1}"
+  WEB_AUDIT_LHCI_CHROME_FLAGS="${WEB_AUDIT_LHCI_CHROME_FLAGS:---no-sandbox --disable-dev-shm-usage --disable-gpu --disable-setuid-sandbox}"
+  WEB_AUDIT_LHCI_TIMEOUT="${WEB_AUDIT_LHCI_TIMEOUT:-3m}"
   WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD="${WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD:-45000}"
   WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP="${WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP:-30000}"
   WEB_AUDIT_SITESPEED_IMAGE="${WEB_AUDIT_SITESPEED_IMAGE:-sitespeedio/sitespeed.io:41.3.3}"
@@ -254,13 +290,24 @@ stop_docker_if_started_by_this_run() {
 }
 
 chown_reports_if_needed() {
+  [[ "$REPORTS_NEED_CHOWN" == "true" ]] || return
   [[ -n "$REPORT_OWNER" && -n "$REPORT_GROUP" ]] || return
   [[ -d "${REPORT_ROOT:-}" ]] || return
-  (( ${#SUDO[@]} > 0 )) || return
 
-  "${SUDO[@]}" chown -R "$REPORT_OWNER:$REPORT_GROUP" "$REPORT_ROOT" >/dev/null 2>&1 || true
+  if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+    chown -R "$REPORT_OWNER:$REPORT_GROUP" "$REPORT_ROOT" >/dev/null 2>&1 || true
+  elif (( ${#SUDO[@]} > 0 )); then
+    "${SUDO[@]}" chown -R "$REPORT_OWNER:$REPORT_GROUP" "$REPORT_ROOT" >/dev/null 2>&1 || true
+  else
+    return
+  fi
+
   if [[ -n "${ARCHIVE_FILE:-}" && -f "$ARCHIVE_FILE" ]]; then
-    "${SUDO[@]}" chown "$REPORT_OWNER:$REPORT_GROUP" "$ARCHIVE_FILE" >/dev/null 2>&1 || true
+    if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+      chown "$REPORT_OWNER:$REPORT_GROUP" "$ARCHIVE_FILE" >/dev/null 2>&1 || true
+    else
+      "${SUDO[@]}" chown "$REPORT_OWNER:$REPORT_GROUP" "$ARCHIVE_FILE" >/dev/null 2>&1 || true
+    fi
   fi
 }
 
@@ -316,7 +363,19 @@ url_slug() {
 }
 
 install_base_packages() {
-  log "Installing base packages for web audits"
+  local missing=()
+  local cmd
+
+  for cmd in curl jq openssl tar timeout zip; do
+    command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+  done
+
+  if (( ${#missing[@]} == 0 )); then
+    log "Base packages are already available"
+    return
+  fi
+
+  log "Installing missing base packages: ${missing[*]}"
   export DEBIAN_FRONTEND=noninteractive
   export UCF_FORCE_CONFFOLD=1
   export NEEDRESTART_MODE=a
@@ -325,13 +384,26 @@ install_base_packages() {
   run_apt_get -y \
     -o Dpkg::Options::="--force-confdef" \
     -o Dpkg::Options::="--force-confold" \
-    install ca-certificates curl gnupg jq openssl tar zip
+    install ca-certificates coreutils curl gnupg jq openssl tar zip
 }
 
 install_node_if_missing() {
-  if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
-    log "Node.js and npm are already installed: $(node --version)"
+  local node_path
+  local npm_path
+
+  if node_path="$(find_linux_command node)" && npm_path="$(find_linux_command npm)"; then
+    prefer_command_dirs "$node_path" "$npm_path"
+    log "Linux Node.js and npm are already installed: $("$node_path" --version)"
+    log "Node path: $node_path"
+    log "npm path: $npm_path"
     return
+  fi
+
+  if command -v node >/dev/null 2>&1; then
+    warn "Ignoring non-Linux Node.js command on PATH: $(command -v node)"
+  fi
+  if command -v npm >/dev/null 2>&1; then
+    warn "Ignoring non-Linux npm command on PATH: $(command -v npm)"
   fi
 
   log "Installing Node.js $WEB_AUDIT_NODE_MAJOR.x"
@@ -360,11 +432,55 @@ install_node_if_missing() {
     -o Dpkg::Options::="--force-confdef" \
     -o Dpkg::Options::="--force-confold" \
     install nodejs
+
+  node_path="$(find_linux_command node)" || fail "Linux Node.js was installed, but node still resolves to a Windows command. Check PATH."
+  npm_path="$(find_linux_command npm)" || fail "Linux npm was installed, but npm still resolves to a Windows command. Check PATH."
+  prefer_command_dirs "$node_path" "$npm_path"
+}
+
+find_linux_chrome() {
+  local candidate
+  local chrome_path
+
+  for candidate in google-chrome-stable google-chrome chromium chromium-browser; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      chrome_path="$(command -v "$candidate")"
+      is_windows_interop_path "$chrome_path" && continue
+      printf '%s\n' "$chrome_path"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+chrome_command() {
+  local chrome_path
+
+  if [[ -n "$WEB_AUDIT_CHROME_PATH" ]]; then
+    [[ -x "$WEB_AUDIT_CHROME_PATH" ]] || fail "WEB_AUDIT_CHROME_PATH is set but not executable: $WEB_AUDIT_CHROME_PATH"
+    ! is_windows_interop_path "$WEB_AUDIT_CHROME_PATH" || fail "WEB_AUDIT_CHROME_PATH points to Windows Chrome. Install Linux Google Chrome inside WSL/Linux and use that path."
+    printf '%s\n' "$WEB_AUDIT_CHROME_PATH"
+    return
+  fi
+
+  if chrome_path="$(find_linux_chrome)"; then
+    printf '%s\n' "$chrome_path"
+    return
+  fi
+
+  fail "Linux Google Chrome/Chromium executable was not found. Install google-chrome-stable inside Linux/WSL, not Windows Chrome."
 }
 
 install_chrome_if_missing() {
-  if command -v google-chrome >/dev/null 2>&1 || command -v google-chrome-stable >/dev/null 2>&1; then
-    log "Google Chrome is already installed"
+  if [[ -n "$WEB_AUDIT_CHROME_PATH" ]]; then
+    [[ -x "$WEB_AUDIT_CHROME_PATH" ]] || fail "WEB_AUDIT_CHROME_PATH is set but not executable: $WEB_AUDIT_CHROME_PATH"
+    log "Using configured Chrome executable: $WEB_AUDIT_CHROME_PATH"
+    return
+  fi
+
+  if find_linux_chrome >/dev/null 2>&1; then
+    log "Linux Chrome/Chromium is already installed: $(find_linux_chrome)"
     return
   fi
 
@@ -393,9 +509,12 @@ install_chrome_if_missing() {
 }
 
 install_lhci_if_missing() {
-  if command -v lhci >/dev/null 2>&1; then
-    log "Lighthouse CI CLI is already installed: $(lhci --version)"
-    LHCI_CMD=(lhci)
+  local lhci_path
+  local npm_path
+
+  if lhci_path="$(find_linux_command lhci)"; then
+    log "Lighthouse CI CLI is already installed: $("$lhci_path" --version)"
+    LHCI_CMD=("$lhci_path")
     return
   fi
 
@@ -410,8 +529,46 @@ install_lhci_if_missing() {
 
   log "Installing Lighthouse CI CLI locally: @lhci/cli@$WEB_AUDIT_LHCI_VERSION"
   install -d -m 0755 "$lhci_dir"
-  npm install --prefix "$lhci_dir" "@lhci/cli@$WEB_AUDIT_LHCI_VERSION"
+  npm_path="$(find_linux_command npm)" || fail "Linux npm command was not found"
+  "$npm_path" install --prefix "$lhci_dir" "@lhci/cli@$WEB_AUDIT_LHCI_VERSION"
   LHCI_CMD=("$lhci_bin")
+}
+
+preflight_lighthouse() {
+  local chrome_path
+  local node_path
+  local npm_path
+  local smoke_log
+  local chrome_flags=()
+
+  chrome_path="$(chrome_command)"
+  node_path="$(find_linux_command node)" || fail "Linux Node.js command was not found"
+  npm_path="$(find_linux_command npm)" || fail "Linux npm command was not found"
+  WEB_AUDIT_CHROME_PATH="$chrome_path"
+  export CHROME_PATH="$chrome_path"
+
+  smoke_log="$LOG_DIR/chrome-smoke.log"
+  read -r -a chrome_flags <<< "$WEB_AUDIT_LHCI_CHROME_FLAGS"
+
+  log "Node.js: $("$node_path" --version)"
+  log "npm: $("$npm_path" --version)"
+  log "Chrome: $("$chrome_path" --version)"
+  log "Chrome path: $chrome_path"
+  log "Lighthouse CI: $("${LHCI_CMD[@]}" --version)"
+  log "Lighthouse runs: $WEB_AUDIT_LHCI_RUNS, command timeout: $WEB_AUDIT_LHCI_TIMEOUT"
+  log "Checking headless Chrome startup"
+
+  if ! timeout --foreground 30s "$chrome_path" \
+    --headless=new \
+    "${chrome_flags[@]}" \
+    --remote-debugging-address=127.0.0.1 \
+    --remote-debugging-port=0 \
+    --user-data-dir="$REPORT_ROOT/chrome-smoke-profile" \
+    --dump-dom about:blank > "$smoke_log" 2>&1; then
+    fail "Headless Chrome could not start within 30s. See log: $smoke_log"
+  fi
+
+  rm -rf "$REPORT_ROOT/chrome-smoke-profile"
 }
 
 install_docker_if_missing() {
@@ -480,6 +637,19 @@ prepare_report_dir() {
   install -d -m 0755 "$REPORT_ROOT" "$LOG_DIR"
 }
 
+detect_audit_source() {
+  AUDIT_SOURCE_HOSTNAME="$(hostname -f 2>/dev/null || hostname 2>/dev/null || printf 'unknown')"
+  AUDIT_SOURCE_PUBLIC_IP="$(
+    curl -fsS --max-time 8 https://api.ipify.org 2>/dev/null \
+      || curl -fsS --max-time 8 https://ifconfig.me/ip 2>/dev/null \
+      || true
+  )"
+  AUDIT_SOURCE_LOCAL_IPS="$(hostname -I 2>/dev/null | tr -s ' ' ' ' | sed -E 's/^ //; s/ $//' || true)"
+
+  [[ -n "$AUDIT_SOURCE_PUBLIC_IP" ]] || AUDIT_SOURCE_PUBLIC_IP="unknown"
+  [[ -n "$AUDIT_SOURCE_LOCAL_IPS" ]] || AUDIT_SOURCE_LOCAL_IPS="unknown"
+}
+
 write_metadata() {
   local status="$1"
   jq -n \
@@ -488,6 +658,9 @@ write_metadata() {
     --arg runId "$RUN_ID" \
     --arg status "$status" \
     --arg createdAt "$(date -Iseconds)" \
+    --arg sourceHostname "$AUDIT_SOURCE_HOSTNAME" \
+    --arg sourcePublicIp "$AUDIT_SOURCE_PUBLIC_IP" \
+    --arg sourceLocalIps "$AUDIT_SOURCE_LOCAL_IPS" \
     --arg lighthouseRuns "$WEB_AUDIT_LHCI_RUNS" \
     --arg sitespeedRuns "$WEB_AUDIT_SITESPEED_RUNS" \
     --arg sitespeedImage "$WEB_AUDIT_SITESPEED_IMAGE" \
@@ -497,6 +670,11 @@ write_metadata() {
       runId: $runId,
       status: $status,
       updatedAt: $createdAt,
+      auditSource: {
+        hostname: $sourceHostname,
+        publicIp: $sourcePublicIp,
+        localIps: $sourceLocalIps
+      },
       lighthouseRuns: ($lighthouseRuns | tonumber),
       sitespeedRuns: ($sitespeedRuns | tonumber),
       sitespeedImage: $sitespeedImage
@@ -505,19 +683,24 @@ write_metadata() {
 
 write_lhci_config() {
   local target_dir="$1"
+  local node_path
+
+  node_path="$(find_linux_command node)" || fail "Linux Node.js command was not found"
   TEST_URL="$TEST_URL" \
   WEB_AUDIT_LHCI_RUNS="$WEB_AUDIT_LHCI_RUNS" \
   WEB_AUDIT_LHCI_CHROME_FLAGS="$WEB_AUDIT_LHCI_CHROME_FLAGS" \
+  WEB_AUDIT_CHROME_PATH="$WEB_AUDIT_CHROME_PATH" \
   WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD="$WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD" \
   WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP="$WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP" \
-    node <<'NODE' > "$target_dir/lighthouserc.json"
+    "$node_path" <<'NODE' > "$target_dir/lighthouserc.json"
 const config = {
   ci: {
     collect: {
       url: [process.env.TEST_URL],
-      numberOfRuns: Number(process.env.WEB_AUDIT_LHCI_RUNS || 3),
+      numberOfRuns: Number(process.env.WEB_AUDIT_LHCI_RUNS || 1),
+      chromePath: process.env.WEB_AUDIT_CHROME_PATH,
       settings: {
-        chromeFlags: process.env.WEB_AUDIT_LHCI_CHROME_FLAGS || '--headless=new --no-sandbox --disable-dev-shm-usage',
+        chromeFlags: process.env.WEB_AUDIT_LHCI_CHROME_FLAGS || '--no-sandbox --disable-dev-shm-usage --disable-gpu --disable-setuid-sandbox',
         maxWaitForLoad: Number(process.env.WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD || 45000),
         maxWaitForFcp: Number(process.env.WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP || 30000)
       }
@@ -541,6 +724,7 @@ run_lighthouse_ci() {
   install_node_if_missing
   install_chrome_if_missing
   install_lhci_if_missing
+  preflight_lighthouse
 
   install -d -m 0755 "$target_dir"
   write_lhci_config "$target_dir"
@@ -566,6 +750,7 @@ run_sitespeed() {
   pull_sitespeed_image_if_missing
 
   install -d -m 0755 "$target_dir"
+  REPORTS_NEED_CHOWN=true
   SITESPEED_CONTAINER_NAME="web-audits-sitespeed-$RUN_ID"
 
   if [[ -n "$WEB_AUDIT_SITESPEED_EXTRA_ARGS" ]]; then
@@ -615,6 +800,9 @@ write_summary() {
     printf 'URL: %s\n' "$TEST_URL"
     printf 'Test type: %s\n' "$TEST_TYPE"
     printf 'Run ID: %s\n' "$RUN_ID"
+    printf 'Audit source hostname: %s\n' "$AUDIT_SOURCE_HOSTNAME"
+    printf 'Audit source public IP: %s\n' "$AUDIT_SOURCE_PUBLIC_IP"
+    printf 'Audit source local IPs: %s\n' "$AUDIT_SOURCE_LOCAL_IPS"
     printf 'Report directory: %s\n' "$REPORT_ROOT"
     if [[ -n "${ARCHIVE_FILE:-}" ]]; then
       printf 'Zip archive: %s\n' "$ARCHIVE_FILE"
@@ -640,6 +828,7 @@ main() {
   require_cmd jq
   require_cmd timeout
   prepare_report_dir
+  detect_audit_source
   write_metadata "running"
 
   case "$TEST_TYPE" in

@@ -28,6 +28,26 @@ err() { log_line "ERROR" "$*"; }
 info() { log_line "INFO" "$*"; }
 section() { echo; log_line "SECTION" "$*"; }
 fail() { log_line "ERROR" "$*" >&2; exit 1; }
+is_windows_interop_path() { [[ "$1" == /mnt/c/* || "$1" == *.exe ]]; }
+
+find_linux_command() {
+  local command_name="$1"
+  local command_path
+  local fixed_path
+
+  for fixed_path in "/usr/local/bin/$command_name" "/usr/bin/$command_name" "/bin/$command_name"; do
+    if [[ -x "$fixed_path" ]] && ! is_windows_interop_path "$fixed_path"; then
+      printf '%s\n' "$fixed_path"
+      return 0
+    fi
+  done
+
+  command -v "$command_name" >/dev/null 2>&1 || return 1
+  command_path="$(command -v "$command_name")"
+  is_windows_interop_path "$command_path" && return 1
+
+  printf '%s\n' "$command_path"
+}
 
 init_privileges() {
   if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
@@ -54,6 +74,29 @@ docker_cmd() {
   fi
 
   "${DOCKER_CMD[@]}" "$@"
+}
+
+find_linux_chrome() {
+  local candidate
+  local chrome_path
+
+  if [[ -n "${WEB_AUDIT_CHROME_PATH:-}" ]]; then
+    [[ -x "$WEB_AUDIT_CHROME_PATH" ]] || return 1
+    is_windows_interop_path "$WEB_AUDIT_CHROME_PATH" && return 1
+    printf '%s\n' "$WEB_AUDIT_CHROME_PATH"
+    return 0
+  fi
+
+  for candidate in google-chrome-stable google-chrome chromium chromium-browser; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      chrome_path="$(command -v "$candidate")"
+      is_windows_interop_path "$chrome_path" && continue
+      printf '%s\n' "$chrome_path"
+      return 0
+    fi
+  done
+
+  return 1
 }
 
 resolve_env_path() {
@@ -121,6 +164,8 @@ load_env() {
   fi
 
   WEB_AUDIT_RESULTS_DIR="$(absolute_module_path "${WEB_AUDIT_RESULTS_DIR:-reports}")"
+  WEB_AUDIT_CHROME_PATH="${WEB_AUDIT_CHROME_PATH:-}"
+  WEB_AUDIT_LHCI_CHROME_FLAGS="${WEB_AUDIT_LHCI_CHROME_FLAGS:---no-sandbox --disable-dev-shm-usage --disable-gpu --disable-setuid-sandbox}"
   WEB_AUDIT_SITESPEED_IMAGE="${WEB_AUDIT_SITESPEED_IMAGE:-sitespeedio/sitespeed.io:41.3.3}"
 }
 
@@ -138,22 +183,40 @@ check_system() {
   check_cmd jq
   check_cmd zip
   check_cmd tar
+  check_cmd timeout
 }
 
 check_lighthouse_dependencies() {
-  section "Lighthouse CI dependencies"
-  check_cmd node
-  check_cmd npm
+  local chrome_path
+  local lhci_path
+  local node_path
+  local npm_path
+  local smoke_dir
+  local chrome_flags=()
 
-  if command -v node >/dev/null 2>&1; then
-    info "Node.js version: $(node --version)"
+  section "Lighthouse CI dependencies"
+  if node_path="$(find_linux_command node)"; then
+    ok "Linux Node.js command found: $node_path"
+    info "Node.js version: $("$node_path" --version)"
+  elif command -v node >/dev/null 2>&1; then
+    err "Node.js resolves to a Windows/non-Linux command: $(command -v node)"
+  else
+    err "Command not found: node"
   fi
-  if command -v npm >/dev/null 2>&1; then
-    info "npm version: $(npm --version)"
+
+  if npm_path="$(find_linux_command npm)"; then
+    ok "Linux npm command found: $npm_path"
+    info "npm version: $("$npm_path" --version)"
+  elif command -v npm >/dev/null 2>&1; then
+    err "npm resolves to a Windows/non-Linux command: $(command -v npm)"
+  else
+    err "Command not found: npm"
   fi
-  if command -v lhci >/dev/null 2>&1; then
-    ok "Lighthouse CI command found: lhci"
-    info "Lighthouse CI version: $(lhci --version)"
+  if lhci_path="$(find_linux_command lhci)"; then
+    ok "Linux Lighthouse CI command found: $lhci_path"
+    info "Lighthouse CI version: $("$lhci_path" --version)"
+  elif command -v lhci >/dev/null 2>&1; then
+    err "Lighthouse CI resolves to a Windows/non-Linux command: $(command -v lhci)"
   elif [[ -x "$SCRIPT_DIR/.tools/lhci/node_modules/.bin/lhci" ]]; then
     ok "Local Lighthouse CI command found: $SCRIPT_DIR/.tools/lhci/node_modules/.bin/lhci"
     info "Lighthouse CI version: $("$SCRIPT_DIR/.tools/lhci/node_modules/.bin/lhci" --version)"
@@ -161,14 +224,32 @@ check_lighthouse_dependencies() {
     err "Lighthouse CI CLI is not installed globally or locally"
   fi
 
-  if command -v google-chrome >/dev/null 2>&1; then
-    ok "Google Chrome command found: google-chrome"
-    info "$(google-chrome --version)"
-  elif command -v google-chrome-stable >/dev/null 2>&1; then
-    ok "Google Chrome command found: google-chrome-stable"
-    info "$(google-chrome-stable --version)"
+  if [[ -n "$WEB_AUDIT_CHROME_PATH" ]] && is_windows_interop_path "$WEB_AUDIT_CHROME_PATH"; then
+    err "WEB_AUDIT_CHROME_PATH points to Windows Chrome: $WEB_AUDIT_CHROME_PATH"
+  elif chrome_path="$(find_linux_chrome)"; then
+    ok "Linux Chrome/Chromium executable found: $chrome_path"
+    info "$("$chrome_path" --version)"
+
+    if command -v timeout >/dev/null 2>&1; then
+      read -r -a chrome_flags <<< "$WEB_AUDIT_LHCI_CHROME_FLAGS"
+      smoke_dir="$(mktemp -d)"
+      if timeout --foreground 30s "$chrome_path" \
+        --headless=new \
+        "${chrome_flags[@]}" \
+        --remote-debugging-address=127.0.0.1 \
+        --remote-debugging-port=0 \
+        --user-data-dir="$smoke_dir" \
+        --dump-dom about:blank >/dev/null 2>&1; then
+        ok "Headless Chrome smoke test passed"
+      else
+        err "Headless Chrome smoke test failed"
+      fi
+      rm -rf "$smoke_dir"
+    else
+      warn "Skipping Chrome smoke test because timeout command is missing"
+    fi
   else
-    err "Google Chrome is not installed"
+    err "Linux Google Chrome/Chromium is not installed or WEB_AUDIT_CHROME_PATH is not executable"
   fi
 
   [[ -f "$NODE_KEYRING" ]] && ok "NodeSource keyring is present" || warn "NodeSource keyring is missing: $NODE_KEYRING"

@@ -37,7 +37,7 @@ For Lighthouse CI without `sudo`, the user needs:
 
 * write access to `web-audits/` for local tools and reports
 * `node` and `npm` already installed
-* Google Chrome or Google Chrome Stable already installed and available in `PATH`
+* Linux Google Chrome, Google Chrome Stable, or Chromium already installed and available in `PATH`
 * `jq`, `zip`, `tar`, and `curl` already installed
 
 The script installs `@lhci/cli` locally into `web-audits/.tools/`, so global `npm install -g` is not required.
@@ -179,16 +179,20 @@ web-audits/reports/<site>/<timestamp>.zip
 WEB_AUDIT_RESULTS_DIR=reports
 WEB_AUDIT_DEFAULT_TEST=all
 WEB_AUDIT_NODE_MAJOR=22
+WEB_AUDIT_CHROME_PATH=""
 WEB_AUDIT_LHCI_VERSION=latest
-WEB_AUDIT_LHCI_RUNS=3
-WEB_AUDIT_LHCI_TIMEOUT=10m
+WEB_AUDIT_LHCI_RUNS=1
+WEB_AUDIT_LHCI_CHROME_FLAGS="--no-sandbox --disable-dev-shm-usage --disable-gpu --disable-setuid-sandbox"
+WEB_AUDIT_LHCI_TIMEOUT=3m
 WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD=45000
 WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP=30000
 WEB_AUDIT_SITESPEED_IMAGE=sitespeedio/sitespeed.io:41.3.3
 WEB_AUDIT_SITESPEED_BROWSER=chrome
 WEB_AUDIT_SITESPEED_RUNS=3
 WEB_AUDIT_SITESPEED_CONNECTIVITY=native
+WEB_AUDIT_SITESPEED_DOCKER_SHM_SIZE=2g
 WEB_AUDIT_SITESPEED_TIMEOUT=30m
+WEB_AUDIT_SITESPEED_EXTRA_ARGS=""
 WEB_AUDIT_CREATE_ZIP=true
 WEB_AUDIT_STOP_DOCKER_AFTER_RUN=true
 ```
@@ -199,6 +203,24 @@ Lighthouse should not run for tens of minutes on one page. The module uses two l
 
 * `WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD` and `WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP` are passed into Lighthouse settings in milliseconds.
 * `WEB_AUDIT_LHCI_TIMEOUT` wraps the whole `lhci collect` command.
+* Before running Lighthouse, the script starts Chrome in headless mode with a 30 second smoke test.
+
+If the log stops around `Run #1...` and then shows `Unable to connect to Chrome`, check that the server is using Linux Node.js and Linux Chrome, not Windows `node.exe` or Windows Chrome from WSL. The report log usually exposes this through paths like `/mnt/c/Users/.../lighthouse...`.
+
+Check:
+
+```bash
+which node
+which npm
+which google-chrome-stable || which google-chrome || which chromium
+bash check-setup.sh
+```
+
+If needed, force the Linux executable in `web-audits/.env`:
+
+```env
+WEB_AUDIT_CHROME_PATH=/usr/bin/google-chrome-stable
+```
 
 If a run is already stuck, press `Ctrl+C`. If the terminal does not return, inspect and stop the related processes:
 
@@ -211,6 +233,22 @@ Then stop only the relevant process IDs:
 ```bash
 kill PID
 ```
+
+## Metadata
+
+Each run writes `metadata.json` with the target URL, run status, tool settings, and source server data:
+
+```json
+{
+  "auditSource": {
+    "hostname": "server.example",
+    "publicIp": "203.0.113.10",
+    "localIps": "10.0.0.5 172.17.0.1"
+  }
+}
+```
+
+`auditSource.publicIp` is resolved through a short external IP check. If that check is unavailable, the value is written as `unknown` and the audit continues.
 
 ## Download To Windows
 
