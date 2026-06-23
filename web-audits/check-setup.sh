@@ -9,6 +9,8 @@ NODE_KEYRING="/etc/apt/keyrings/nodesource.gpg"
 NODE_SOURCE_LIST="/etc/apt/sources.list.d/nodesource.list"
 CHROME_KEYRING="/etc/apt/keyrings/google-chrome.gpg"
 CHROME_SOURCE_LIST="/etc/apt/sources.list.d/google-chrome.list"
+SUDO=()
+DOCKER_CMD=()
 
 LOG_COLOR='\033[1;36m'
 LOG_RESET='\033[0m'
@@ -26,7 +28,33 @@ err() { log_line "ERROR" "$*"; }
 info() { log_line "INFO" "$*"; }
 section() { echo; log_line "SECTION" "$*"; }
 fail() { log_line "ERROR" "$*" >&2; exit 1; }
-require_root() { [[ ${EUID:-$(id -u)} -eq 0 ]] || fail "Run as root: cd ~/server-scripts/web-audits && bash check-setup.sh"; }
+
+init_privileges() {
+  if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+    SUDO=()
+  elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+    SUDO=(sudo)
+  else
+    SUDO=()
+  fi
+}
+
+docker_cmd() {
+  if (( ${#DOCKER_CMD[@]} > 0 )); then
+    "${DOCKER_CMD[@]}" "$@"
+    return
+  fi
+
+  if docker info >/dev/null 2>&1; then
+    DOCKER_CMD=(docker)
+  elif (( ${#SUDO[@]} > 0 )) && sudo docker info >/dev/null 2>&1; then
+    DOCKER_CMD=(sudo docker)
+  else
+    DOCKER_CMD=(docker)
+  fi
+
+  "${DOCKER_CMD[@]}" "$@"
+}
 
 resolve_env_path() {
   local candidate="$1"
@@ -116,7 +144,6 @@ check_lighthouse_dependencies() {
   section "Lighthouse CI dependencies"
   check_cmd node
   check_cmd npm
-  check_cmd lhci
 
   if command -v node >/dev/null 2>&1; then
     info "Node.js version: $(node --version)"
@@ -125,7 +152,13 @@ check_lighthouse_dependencies() {
     info "npm version: $(npm --version)"
   fi
   if command -v lhci >/dev/null 2>&1; then
+    ok "Lighthouse CI command found: lhci"
     info "Lighthouse CI version: $(lhci --version)"
+  elif [[ -x "$SCRIPT_DIR/.tools/lhci/node_modules/.bin/lhci" ]]; then
+    ok "Local Lighthouse CI command found: $SCRIPT_DIR/.tools/lhci/node_modules/.bin/lhci"
+    info "Lighthouse CI version: $("$SCRIPT_DIR/.tools/lhci/node_modules/.bin/lhci" --version)"
+  else
+    err "Lighthouse CI CLI is not installed globally or locally"
   fi
 
   if command -v google-chrome >/dev/null 2>&1; then
@@ -150,13 +183,13 @@ check_sitespeed_dependencies() {
 
   if command -v docker >/dev/null 2>&1; then
     info "Docker version: $(docker --version)"
-    if docker info >/dev/null 2>&1; then
+    if docker_cmd info >/dev/null 2>&1; then
       ok "Docker daemon is reachable"
     else
       err "Docker daemon is not reachable"
     fi
 
-    if docker image inspect "$WEB_AUDIT_SITESPEED_IMAGE" >/dev/null 2>&1; then
+    if docker_cmd image inspect "$WEB_AUDIT_SITESPEED_IMAGE" >/dev/null 2>&1; then
       ok "sitespeed.io image is present: $WEB_AUDIT_SITESPEED_IMAGE"
     else
       warn "sitespeed.io image is not pulled yet: $WEB_AUDIT_SITESPEED_IMAGE"
@@ -179,7 +212,7 @@ check_reports() {
 }
 
 main() {
-  require_root
+  init_privileges
   load_env
   check_system
   check_lighthouse_dependencies

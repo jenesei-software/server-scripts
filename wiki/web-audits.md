@@ -27,6 +27,50 @@ cd ~/server-scripts/web-audits
 bash run-web-audit.sh
 ```
 
+Run it as your normal SSH user. The script asks for `sudo` only when it needs to install packages, manage Docker, or clean up Docker after a sitespeed.io run.
+
+## Running Without Sudo
+
+The audit itself can run without `sudo` when the server is already prepared.
+
+For Lighthouse CI without `sudo`, the user needs:
+
+* write access to `web-audits/` for local tools and reports
+* `node` and `npm` already installed
+* Google Chrome or Google Chrome Stable already installed and available in `PATH`
+* `jq`, `zip`, `tar`, and `curl` already installed
+
+The script installs `@lhci/cli` locally into `web-audits/.tools/`, so global `npm install -g` is not required.
+
+For sitespeed.io without `sudo`, the user needs:
+
+* Docker already installed
+* Docker service already running
+* access to Docker without sudo, for example membership in the `docker` group
+* write access to `web-audits/reports/`
+
+One-time Docker group setup by an admin:
+
+```bash
+sudo usermod -aG docker ubuntu
+```
+
+Then log out and log back in, or run:
+
+```bash
+newgrp docker
+```
+
+Check:
+
+```bash
+docker info
+```
+
+If `docker info` works without `sudo`, sitespeed.io can run without `sudo`.
+
+Important: membership in the `docker` group is effectively root-level access on the host. Treat that user as an admin user.
+
 Non-interactive mode:
 
 ```bash
@@ -78,7 +122,7 @@ This works because sparse checkout still keeps the Git repository metadata. A do
 
 ## Dependencies
 
-The script installs missing dependencies as root.
+The script installs missing dependencies through `sudo` when needed.
 
 Lighthouse CI dependencies:
 
@@ -147,28 +191,28 @@ WEB_AUDIT_STOP_DOCKER_AFTER_RUN=true
 
 ## Download To Windows
 
-Download one archive from Windows PowerShell:
+Download one archive from Windows PowerShell. Use the SSH user and exact archive path printed in `summary.txt`:
 
 ```powershell
-scp root@SERVER_IP:/root/server-scripts/web-audits/reports/example.com/20260623-153000.zip C:\Users\YOUR_USER\Downloads\
+scp SSH_USER@SERVER_IP:/path/to/server-scripts/web-audits/reports/example.com/20260623-153000.zip C:\Users\YOUR_USER\Downloads\
 ```
 
 With a custom SSH port:
 
 ```powershell
-scp -P PORT root@SERVER_IP:/root/server-scripts/web-audits/reports/example.com/20260623-153000.zip C:\Users\YOUR_USER\Downloads\
+scp -P PORT SSH_USER@SERVER_IP:/path/to/server-scripts/web-audits/reports/example.com/20260623-153000.zip C:\Users\YOUR_USER\Downloads\
 ```
 
 Download all reports:
 
 ```powershell
-scp -r root@SERVER_IP:/root/server-scripts/web-audits/reports C:\Users\YOUR_USER\Downloads\web-audits-reports
+scp -r SSH_USER@SERVER_IP:/path/to/server-scripts/web-audits/reports C:\Users\YOUR_USER\Downloads\web-audits-reports
 ```
 
 WinSCP path:
 
 ```text
-/root/server-scripts/web-audits/reports
+/path/to/server-scripts/web-audits/reports
 ```
 
 ## Check

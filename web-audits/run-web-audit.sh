@@ -11,6 +11,13 @@ DOCKER_KEYRING="/etc/apt/keyrings/docker.gpg"
 DOCKER_SOURCE_LIST="/etc/apt/sources.list.d/docker.list"
 CHROME_KEYRING="/etc/apt/keyrings/google-chrome.gpg"
 CHROME_SOURCE_LIST="/etc/apt/sources.list.d/google-chrome.list"
+SUDO=()
+DOCKER_CMD=()
+LHCI_CMD=()
+DOCKER_USED_IN_THIS_RUN=false
+DOCKER_WAS_ACTIVE_BEFORE_RUN=true
+REPORT_OWNER=""
+REPORT_GROUP=""
 
 LOG_COLOR='\033[1;36m'
 LOG_RESET='\033[0m'
@@ -25,8 +32,77 @@ log_line() {
 log() { log_line "INFO" "$*"; }
 warn() { log_line "WARN" "$*"; }
 fail() { log_line "ERROR" "$*" >&2; exit 1; }
-require_root() { [[ ${EUID:-$(id -u)} -eq 0 ]] || fail "Run as root: cd ~/server-scripts/web-audits && bash run-web-audit.sh"; }
 require_cmd() { command -v "$1" >/dev/null 2>&1 || fail "Command not found: $1"; }
+
+init_privileges() {
+  if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+    SUDO=()
+    if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]] && id "$SUDO_USER" >/dev/null 2>&1; then
+      REPORT_OWNER="$SUDO_USER"
+      REPORT_GROUP="$(id -gn "$SUDO_USER")"
+    fi
+    return
+  fi
+
+  REPORT_OWNER="$(id -un)"
+  REPORT_GROUP="$(id -gn)"
+
+  if command -v sudo >/dev/null 2>&1; then
+    SUDO=(sudo)
+  else
+    SUDO=()
+  fi
+}
+
+ensure_sudo() {
+  local reason="$1"
+  [[ ${EUID:-$(id -u)} -eq 0 ]] && return
+  (( ${#SUDO[@]} > 0 )) || fail "$reason requires sudo, but sudo is not installed or not available for this user"
+
+  if ! sudo -n true 2>/dev/null; then
+    log "$reason requires sudo"
+    sudo -v
+  fi
+}
+
+run_apt_get() {
+  ensure_sudo "Installing or updating system packages"
+  "${SUDO[@]}" apt-get "$@"
+}
+
+run_systemctl() {
+  ensure_sudo "Managing the Docker system service"
+  "${SUDO[@]}" systemctl "$@"
+}
+
+docker_cmd() {
+  if (( ${#DOCKER_CMD[@]} > 0 )); then
+    "${DOCKER_CMD[@]}" "$@"
+    return
+  fi
+
+  if docker info >/dev/null 2>&1; then
+    docker "$@"
+    return
+  fi
+
+  if (( ${#SUDO[@]} > 0 )); then
+    "${SUDO[@]}" docker "$@"
+    return
+  fi
+
+  docker "$@"
+}
+
+set_docker_command() {
+  if docker info >/dev/null 2>&1; then
+    DOCKER_CMD=(docker)
+  elif (( ${#SUDO[@]} > 0 )) && sudo docker info >/dev/null 2>&1; then
+    DOCKER_CMD=(sudo docker)
+  else
+    fail "Docker daemon is not reachable. Check Docker service status and permissions."
+  fi
+}
 
 resolve_env_path() {
   local candidate="$1"
@@ -148,9 +224,9 @@ stop_sitespeed_container_if_running() {
   [[ -n "${SITESPEED_CONTAINER_NAME:-}" ]] || return
   command -v docker >/dev/null 2>&1 || return
 
-  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$SITESPEED_CONTAINER_NAME"; then
+  if docker_cmd ps --format '{{.Names}}' 2>/dev/null | grep -qx "$SITESPEED_CONTAINER_NAME"; then
     warn "Stopping sitespeed.io container: $SITESPEED_CONTAINER_NAME"
-    docker stop "$SITESPEED_CONTAINER_NAME" >/dev/null 2>&1 || true
+    docker_cmd stop "$SITESPEED_CONTAINER_NAME" >/dev/null 2>&1 || true
   fi
 }
 
@@ -161,13 +237,24 @@ stop_docker_if_started_by_this_run() {
   command -v docker >/dev/null 2>&1 || return
 
   local running_count
-  running_count="$(docker ps -q 2>/dev/null | wc -l | tr -d ' ')"
+  running_count="$(docker_cmd ps -q 2>/dev/null | wc -l | tr -d ' ')"
   if [[ "$running_count" == "0" ]]; then
     log "Stopping Docker service because it was started only for this audit run"
-    systemctl stop docker.socket >/dev/null 2>&1 || true
-    systemctl stop docker >/dev/null 2>&1 || true
+    run_systemctl stop docker.socket >/dev/null 2>&1 || true
+    run_systemctl stop docker >/dev/null 2>&1 || true
   else
     warn "Docker was started by this audit run, but other containers are running; leaving Docker active"
+  fi
+}
+
+chown_reports_if_needed() {
+  [[ -n "$REPORT_OWNER" && -n "$REPORT_GROUP" ]] || return
+  [[ -d "${REPORT_ROOT:-}" ]] || return
+  (( ${#SUDO[@]} > 0 )) || return
+
+  "${SUDO[@]}" chown -R "$REPORT_OWNER:$REPORT_GROUP" "$REPORT_ROOT" >/dev/null 2>&1 || true
+  if [[ -n "${ARCHIVE_FILE:-}" && -f "$ARCHIVE_FILE" ]]; then
+    "${SUDO[@]}" chown "$REPORT_OWNER:$REPORT_GROUP" "$ARCHIVE_FILE" >/dev/null 2>&1 || true
   fi
 }
 
@@ -228,8 +315,8 @@ install_base_packages() {
   export UCF_FORCE_CONFFOLD=1
   export NEEDRESTART_MODE=a
 
-  apt-get update
-  apt-get -y \
+  run_apt_get update
+  run_apt_get -y \
     -o Dpkg::Options::="--force-confdef" \
     -o Dpkg::Options::="--force-confold" \
     install ca-certificates curl gnupg jq openssl tar zip
@@ -242,27 +329,28 @@ install_node_if_missing() {
   fi
 
   log "Installing Node.js $WEB_AUDIT_NODE_MAJOR.x"
+  ensure_sudo "Installing Node.js"
   export DEBIAN_FRONTEND=noninteractive
   export UCF_FORCE_CONFFOLD=1
   export NEEDRESTART_MODE=a
 
-  apt-get update
-  apt-get -y \
+  run_apt_get update
+  run_apt_get -y \
     -o Dpkg::Options::="--force-confdef" \
     -o Dpkg::Options::="--force-confold" \
     install ca-certificates curl gnupg
 
-  install -d -m 0755 /etc/apt/keyrings
+  "${SUDO[@]}" install -d -m 0755 /etc/apt/keyrings
   curl -fsSL "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key" \
-    | gpg --batch --yes --dearmor -o "$NODE_KEYRING"
-  chmod 0644 "$NODE_KEYRING"
+    | "${SUDO[@]}" gpg --batch --yes --dearmor -o "$NODE_KEYRING"
+  "${SUDO[@]}" chmod 0644 "$NODE_KEYRING"
 
   printf 'deb [signed-by=%s] https://deb.nodesource.com/node_%s.x nodistro main\n' "$NODE_KEYRING" "$WEB_AUDIT_NODE_MAJOR" \
-    > "$NODE_SOURCE_LIST"
-  chmod 0644 "$NODE_SOURCE_LIST"
+    | "${SUDO[@]}" tee "$NODE_SOURCE_LIST" >/dev/null
+  "${SUDO[@]}" chmod 0644 "$NODE_SOURCE_LIST"
 
-  apt-get update
-  apt-get -y \
+  run_apt_get update
+  run_apt_get -y \
     -o Dpkg::Options::="--force-confdef" \
     -o Dpkg::Options::="--force-confold" \
     install nodejs
@@ -277,21 +365,22 @@ install_chrome_if_missing() {
   [[ "$(dpkg --print-architecture)" == "amd64" ]] || fail "Google Chrome apt package is only configured here for amd64. Use sitespeed.io Docker or install a compatible Chromium manually."
 
   log "Installing Google Chrome stable"
+  ensure_sudo "Installing Google Chrome"
   export DEBIAN_FRONTEND=noninteractive
   export UCF_FORCE_CONFFOLD=1
   export NEEDRESTART_MODE=a
 
-  install -d -m 0755 /etc/apt/keyrings
+  "${SUDO[@]}" install -d -m 0755 /etc/apt/keyrings
   curl -fsSL "https://dl.google.com/linux/linux_signing_key.pub" \
-    | gpg --batch --yes --dearmor -o "$CHROME_KEYRING"
-  chmod 0644 "$CHROME_KEYRING"
+    | "${SUDO[@]}" gpg --batch --yes --dearmor -o "$CHROME_KEYRING"
+  "${SUDO[@]}" chmod 0644 "$CHROME_KEYRING"
 
   printf 'deb [arch=amd64 signed-by=%s] http://dl.google.com/linux/chrome/deb/ stable main\n' "$CHROME_KEYRING" \
-    > "$CHROME_SOURCE_LIST"
-  chmod 0644 "$CHROME_SOURCE_LIST"
+    | "${SUDO[@]}" tee "$CHROME_SOURCE_LIST" >/dev/null
+  "${SUDO[@]}" chmod 0644 "$CHROME_SOURCE_LIST"
 
-  apt-get update
-  apt-get -y \
+  run_apt_get update
+  run_apt_get -y \
     -o Dpkg::Options::="--force-confdef" \
     -o Dpkg::Options::="--force-confold" \
     install google-chrome-stable
@@ -300,11 +389,23 @@ install_chrome_if_missing() {
 install_lhci_if_missing() {
   if command -v lhci >/dev/null 2>&1; then
     log "Lighthouse CI CLI is already installed: $(lhci --version)"
+    LHCI_CMD=(lhci)
     return
   fi
 
-  log "Installing Lighthouse CI CLI: @lhci/cli@$WEB_AUDIT_LHCI_VERSION"
-  npm install -g "@lhci/cli@$WEB_AUDIT_LHCI_VERSION"
+  local lhci_dir="$SCRIPT_DIR/.tools/lhci"
+  local lhci_bin="$lhci_dir/node_modules/.bin/lhci"
+
+  if [[ -x "$lhci_bin" ]]; then
+    log "Using local Lighthouse CI CLI: $lhci_bin"
+    LHCI_CMD=("$lhci_bin")
+    return
+  fi
+
+  log "Installing Lighthouse CI CLI locally: @lhci/cli@$WEB_AUDIT_LHCI_VERSION"
+  install -d -m 0755 "$lhci_dir"
+  npm install --prefix "$lhci_dir" "@lhci/cli@$WEB_AUDIT_LHCI_VERSION"
+  LHCI_CMD=("$lhci_bin")
 }
 
 install_docker_if_missing() {
@@ -312,51 +413,56 @@ install_docker_if_missing() {
 
   if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
     log "Docker and Docker Compose are already installed"
-    systemctl enable --now docker
+    if ! docker info >/dev/null 2>&1 && ! { (( ${#SUDO[@]} > 0 )) && sudo docker info >/dev/null 2>&1; }; then
+      run_systemctl enable --now docker
+    fi
     DOCKER_USED_IN_THIS_RUN=true
+    set_docker_command
     return
   fi
 
   log "Installing Docker Engine and Docker Compose plugin"
+  ensure_sudo "Installing Docker"
   export DEBIAN_FRONTEND=noninteractive
   export UCF_FORCE_CONFFOLD=1
   export NEEDRESTART_MODE=a
 
-  apt-get update
-  apt-get -y \
+  run_apt_get update
+  run_apt_get -y \
     -o Dpkg::Options::="--force-confdef" \
     -o Dpkg::Options::="--force-confold" \
     install ca-certificates curl gnupg
 
-  install -d -m 0755 /etc/apt/keyrings
+  "${SUDO[@]}" install -d -m 0755 /etc/apt/keyrings
   curl -fsSL "https://download.docker.com/linux/ubuntu/gpg" \
-    | gpg --batch --yes --dearmor -o "$DOCKER_KEYRING"
-  chmod 0644 "$DOCKER_KEYRING"
+    | "${SUDO[@]}" gpg --batch --yes --dearmor -o "$DOCKER_KEYRING"
+  "${SUDO[@]}" chmod 0644 "$DOCKER_KEYRING"
 
   # shellcheck disable=SC1091
   source /etc/os-release
   printf 'deb [arch=%s signed-by=%s] https://download.docker.com/linux/ubuntu %s stable\n' "$(dpkg --print-architecture)" "$DOCKER_KEYRING" "$VERSION_CODENAME" \
-    > "$DOCKER_SOURCE_LIST"
-  chmod 0644 "$DOCKER_SOURCE_LIST"
+    | "${SUDO[@]}" tee "$DOCKER_SOURCE_LIST" >/dev/null
+  "${SUDO[@]}" chmod 0644 "$DOCKER_SOURCE_LIST"
 
-  apt-get update
-  apt-get -y \
+  run_apt_get update
+  run_apt_get -y \
     -o Dpkg::Options::="--force-confdef" \
     -o Dpkg::Options::="--force-confold" \
     install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
-  systemctl enable --now docker
+  run_systemctl enable --now docker
   DOCKER_USED_IN_THIS_RUN=true
+  set_docker_command
 }
 
 pull_sitespeed_image_if_missing() {
-  if docker image inspect "$WEB_AUDIT_SITESPEED_IMAGE" >/dev/null 2>&1; then
+  if docker_cmd image inspect "$WEB_AUDIT_SITESPEED_IMAGE" >/dev/null 2>&1; then
     log "sitespeed.io Docker image is already present: $WEB_AUDIT_SITESPEED_IMAGE"
     return
   fi
 
   log "Pulling sitespeed.io Docker image: $WEB_AUDIT_SITESPEED_IMAGE"
-  docker pull "$WEB_AUDIT_SITESPEED_IMAGE"
+  docker_cmd pull "$WEB_AUDIT_SITESPEED_IMAGE"
 }
 
 prepare_report_dir() {
@@ -432,8 +538,8 @@ run_lighthouse_ci() {
   log "Running Lighthouse CI for $TEST_URL"
   (
     cd "$target_dir"
-    lhci collect --config=lighthouserc.json
-    lhci upload --config=lighthouserc.json
+    "${LHCI_CMD[@]}" collect --config=lighthouserc.json
+    "${LHCI_CMD[@]}" upload --config=lighthouserc.json
   ) 2>&1 | tee "$log_file"
 
   [[ -f "$target_dir/reports/manifest.json" ]] || fail "Lighthouse CI report manifest was not created: $target_dir/reports/manifest.json"
@@ -456,7 +562,7 @@ run_sitespeed() {
   fi
 
   log "Running sitespeed.io for $TEST_URL"
-  docker run \
+  docker_cmd run \
     --shm-size "$WEB_AUDIT_SITESPEED_DOCKER_SHM_SIZE" \
     --rm \
     --name "$SITESPEED_CONTAINER_NAME" \
@@ -473,6 +579,7 @@ run_sitespeed() {
     "$TEST_URL" 2>&1 | tee "$log_file"
 
   SITESPEED_CONTAINER_NAME=""
+  chown_reports_if_needed
 }
 
 create_zip_archive() {
@@ -484,10 +591,12 @@ create_zip_archive() {
     cd "$WEB_AUDIT_RESULTS_DIR/$SITE_SLUG"
     zip -qr "$RUN_ID.zip" "$RUN_ID"
   )
+  chown_reports_if_needed
 }
 
 write_summary() {
   local summary_file="$REPORT_ROOT/summary.txt"
+  local ssh_user_hint="${REPORT_OWNER:-root}"
   {
     printf 'URL: %s\n' "$TEST_URL"
     printf 'Test type: %s\n' "$TEST_TYPE"
@@ -498,17 +607,17 @@ write_summary() {
     fi
     printf '\n'
     printf 'Download from Windows PowerShell:\n'
-    printf 'scp root@SERVER_IP:%s C:\\Users\\YOUR_USER\\Downloads\\\n' "${ARCHIVE_FILE:-$REPORT_ROOT}"
+    printf 'scp %s@SERVER_IP:%s C:\\Users\\YOUR_USER\\Downloads\\\n' "$ssh_user_hint" "${ARCHIVE_FILE:-$REPORT_ROOT}"
     printf '\n'
     printf 'If SSH uses a custom port:\n'
-    printf 'scp -P PORT root@SERVER_IP:%s C:\\Users\\YOUR_USER\\Downloads\\\n' "${ARCHIVE_FILE:-$REPORT_ROOT}"
+    printf 'scp -P PORT %s@SERVER_IP:%s C:\\Users\\YOUR_USER\\Downloads\\\n' "$ssh_user_hint" "${ARCHIVE_FILE:-$REPORT_ROOT}"
   } > "$summary_file"
 }
 
 main() {
   trap cleanup EXIT INT TERM
 
-  require_root
+  init_privileges
   load_env "$@"
   validate_env
   prompt_for_url
