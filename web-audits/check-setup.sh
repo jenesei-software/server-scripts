@@ -179,6 +179,7 @@ load_env() {
   WEB_AUDIT_CHROME_PATH="${WEB_AUDIT_CHROME_PATH:-}"
   WEB_AUDIT_LHCI_CHROME_FLAGS="${WEB_AUDIT_LHCI_CHROME_FLAGS:---no-sandbox --disable-dev-shm-usage --disable-gpu --disable-setuid-sandbox}"
   WEB_AUDIT_SITESPEED_IMAGE="${WEB_AUDIT_SITESPEED_IMAGE:-sitespeedio/sitespeed.io:41.3.3}"
+  WEB_AUDIT_SITESPEED_MIN_FREE_GB="${WEB_AUDIT_SITESPEED_MIN_FREE_GB:-8}"
 }
 
 check_cmd() {
@@ -279,6 +280,12 @@ check_lighthouse_dependencies() {
 }
 
 check_sitespeed_dependencies() {
+  local available_gb
+  local available_kb
+  local check_path
+  local docker_root
+  local required_kb
+
   section "sitespeed.io dependencies"
   check_cmd docker
 
@@ -286,6 +293,18 @@ check_sitespeed_dependencies() {
     info "Docker version: $(docker --version)"
     if docker_cmd info >/dev/null 2>&1; then
       ok "Docker daemon is reachable"
+      docker_root="$(docker_cmd info --format '{{.DockerRootDir}}' 2>/dev/null || printf '/var/lib/docker')"
+      check_path="$docker_root"
+      [[ -d "$check_path" ]] || check_path="/var/lib/docker"
+      [[ -d /var/lib/containerd ]] && check_path="/var/lib/containerd"
+      available_kb="$(df -Pk "$check_path" | awk 'NR == 2 {print $4}')"
+      required_kb=$(( WEB_AUDIT_SITESPEED_MIN_FREE_GB * 1024 * 1024 ))
+      available_gb=$(( available_kb / 1024 / 1024 ))
+      if (( available_kb >= required_kb )); then
+        ok "Docker/containerd free space: ${available_gb}GB on $check_path"
+      else
+        err "Docker/containerd free space is low: ${available_gb}GB on $check_path, need at least ${WEB_AUDIT_SITESPEED_MIN_FREE_GB}GB"
+      fi
     else
       err "Docker daemon is not reachable"
     fi

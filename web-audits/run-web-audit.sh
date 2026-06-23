@@ -14,6 +14,7 @@ CHROME_SOURCE_LIST="/etc/apt/sources.list.d/google-chrome.list"
 SUDO=()
 DOCKER_CMD=()
 LHCI_CMD=()
+LHCI_RUNTIME_DIR=""
 DOCKER_USED_IN_THIS_RUN=false
 DOCKER_WAS_ACTIVE_BEFORE_RUN=true
 REPORT_OWNER=""
@@ -113,8 +114,14 @@ ensure_sudo() {
 }
 
 run_apt_get() {
+  local apt_options=(
+    -o Acquire::Retries=1
+    -o Acquire::http::Timeout=30
+    -o Acquire::https::Timeout=30
+  )
+
   ensure_sudo "Installing or updating system packages"
-  "${SUDO[@]}" apt-get "$@"
+  "${SUDO[@]}" apt-get "${apt_options[@]}" "$@"
 }
 
 run_systemctl() {
@@ -226,7 +233,7 @@ load_env() {
   WEB_AUDIT_LHCI_VERSION="${WEB_AUDIT_LHCI_VERSION:-latest}"
   WEB_AUDIT_LHCI_RUNS="${WEB_AUDIT_LHCI_RUNS:-1}"
   WEB_AUDIT_LHCI_CHROME_FLAGS="${WEB_AUDIT_LHCI_CHROME_FLAGS:---no-sandbox --disable-dev-shm-usage --disable-gpu --disable-setuid-sandbox}"
-  WEB_AUDIT_LHCI_TIMEOUT="${WEB_AUDIT_LHCI_TIMEOUT:-3m}"
+  WEB_AUDIT_LHCI_TIMEOUT="${WEB_AUDIT_LHCI_TIMEOUT:-5m}"
   WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD="${WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD:-45000}"
   WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP="${WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP:-30000}"
   WEB_AUDIT_SITESPEED_IMAGE="${WEB_AUDIT_SITESPEED_IMAGE:-sitespeedio/sitespeed.io:41.3.3}"
@@ -234,6 +241,7 @@ load_env() {
   WEB_AUDIT_SITESPEED_RUNS="${WEB_AUDIT_SITESPEED_RUNS:-3}"
   WEB_AUDIT_SITESPEED_CONNECTIVITY="${WEB_AUDIT_SITESPEED_CONNECTIVITY:-native}"
   WEB_AUDIT_SITESPEED_DOCKER_SHM_SIZE="${WEB_AUDIT_SITESPEED_DOCKER_SHM_SIZE:-2g}"
+  WEB_AUDIT_SITESPEED_MIN_FREE_GB="${WEB_AUDIT_SITESPEED_MIN_FREE_GB:-8}"
   WEB_AUDIT_SITESPEED_TIMEOUT="${WEB_AUDIT_SITESPEED_TIMEOUT:-30m}"
   WEB_AUDIT_SITESPEED_EXTRA_ARGS="${WEB_AUDIT_SITESPEED_EXTRA_ARGS:-}"
   WEB_AUDIT_CREATE_ZIP="${WEB_AUDIT_CREATE_ZIP:-true}"
@@ -260,6 +268,7 @@ validate_env() {
   validate_positive_int WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD "$WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD"
   validate_positive_int WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP "$WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP"
   validate_positive_int WEB_AUDIT_SITESPEED_RUNS "$WEB_AUDIT_SITESPEED_RUNS"
+  validate_positive_int WEB_AUDIT_SITESPEED_MIN_FREE_GB "$WEB_AUDIT_SITESPEED_MIN_FREE_GB"
   validate_bool WEB_AUDIT_CREATE_ZIP "$WEB_AUDIT_CREATE_ZIP"
   validate_bool WEB_AUDIT_STOP_DOCKER_AFTER_RUN "$WEB_AUDIT_STOP_DOCKER_AFTER_RUN"
   [[ -n "$WEB_AUDIT_SITESPEED_IMAGE" ]] || fail "WEB_AUDIT_SITESPEED_IMAGE must not be empty"
@@ -275,8 +284,8 @@ docker_was_active_before_run() {
 }
 
 stop_sitespeed_container_if_running() {
-  [[ -n "${SITESPEED_CONTAINER_NAME:-}" ]] || return
-  command -v docker >/dev/null 2>&1 || return
+  [[ -n "${SITESPEED_CONTAINER_NAME:-}" ]] || return 0
+  command -v docker >/dev/null 2>&1 || return 0
 
   if docker_cmd ps --format '{{.Names}}' 2>/dev/null | grep -qx "$SITESPEED_CONTAINER_NAME"; then
     warn "Stopping sitespeed.io container: $SITESPEED_CONTAINER_NAME"
@@ -285,10 +294,10 @@ stop_sitespeed_container_if_running() {
 }
 
 stop_docker_if_started_by_this_run() {
-  [[ "${WEB_AUDIT_STOP_DOCKER_AFTER_RUN:-true}" == "true" ]] || return
-  [[ "${DOCKER_USED_IN_THIS_RUN:-false}" == "true" ]] || return
-  [[ "${DOCKER_WAS_ACTIVE_BEFORE_RUN:-true}" == "false" ]] || return
-  command -v docker >/dev/null 2>&1 || return
+  [[ "${WEB_AUDIT_STOP_DOCKER_AFTER_RUN:-true}" == "true" ]] || return 0
+  [[ "${DOCKER_USED_IN_THIS_RUN:-false}" == "true" ]] || return 0
+  [[ "${DOCKER_WAS_ACTIVE_BEFORE_RUN:-true}" == "false" ]] || return 0
+  command -v docker >/dev/null 2>&1 || return 0
 
   local running_count
   running_count="$(docker_cmd ps -q 2>/dev/null | wc -l | tr -d ' ')"
@@ -302,9 +311,9 @@ stop_docker_if_started_by_this_run() {
 }
 
 chown_reports_if_needed() {
-  [[ "$REPORTS_NEED_CHOWN" == "true" ]] || return
-  [[ -n "$REPORT_OWNER" && -n "$REPORT_GROUP" ]] || return
-  [[ -d "${REPORT_ROOT:-}" ]] || return
+  [[ "$REPORTS_NEED_CHOWN" == "true" ]] || return 0
+  [[ -n "$REPORT_OWNER" && -n "$REPORT_GROUP" ]] || return 0
+  [[ -d "${REPORT_ROOT:-}" ]] || return 0
 
   if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
     chown -R "$REPORT_OWNER:$REPORT_GROUP" "$REPORT_ROOT" >/dev/null 2>&1 || true
@@ -325,8 +334,10 @@ chown_reports_if_needed() {
 
 cleanup() {
   local exit_code=$?
+  mark_failed_metadata_if_needed "$exit_code"
   stop_sitespeed_container_if_running
   stop_docker_if_started_by_this_run
+  cleanup_lhci_runtime
   return "$exit_code"
 }
 
@@ -553,6 +564,7 @@ preflight_lighthouse() {
   local node_path
   local npm_path
   local smoke_log
+  local smoke_status=0
   local chrome_flags=()
 
   chrome_path="$(chrome_command)"
@@ -572,7 +584,7 @@ preflight_lighthouse() {
   log "Lighthouse runs: $WEB_AUDIT_LHCI_RUNS, command timeout: $WEB_AUDIT_LHCI_TIMEOUT"
   log "Checking headless Chrome startup"
 
-  if ! timeout --foreground 30s "$chrome_path" \
+  timeout --foreground 30s "$chrome_path" \
     --headless=new \
     "${chrome_flags[@]}" \
     --disable-background-networking \
@@ -582,15 +594,59 @@ preflight_lighthouse() {
     --no-default-browser-check \
     --no-first-run \
     --user-data-dir="$REPORT_ROOT/chrome-smoke-profile" \
-    --dump-dom about:blank > "$smoke_log" 2>&1; then
+    --dump-dom about:blank > "$smoke_log" 2>&1 || smoke_status=$?
+
+  if (( smoke_status != 0 )); then
     if grep -q '<html' "$smoke_log"; then
       warn "Headless Chrome produced DOM but did not exit cleanly within 30s; continuing. See log: $smoke_log"
     else
       fail "Headless Chrome could not start within 30s. See log: $smoke_log"
     fi
+  else
+    log "Headless Chrome smoke test passed"
   fi
 
   rm -rf "$REPORT_ROOT/chrome-smoke-profile"
+}
+
+cleanup_lhci_runtime() {
+  [[ -n "${LHCI_RUNTIME_DIR:-}" ]] || return 0
+  [[ -d "$LHCI_RUNTIME_DIR" ]] || { LHCI_RUNTIME_DIR=""; return 0; }
+  rm -rf "$LHCI_RUNTIME_DIR"
+  LHCI_RUNTIME_DIR=""
+}
+
+prepare_lhci_runtime() {
+  cleanup_lhci_runtime
+  LHCI_RUNTIME_DIR="$(mktemp -d -t "web-audits-lhci-${RUN_ID}.XXXXXX")"
+  install -d -m 0755 \
+    "$LHCI_RUNTIME_DIR/tmp" \
+    "$LHCI_RUNTIME_DIR/xdg-cache" \
+    "$LHCI_RUNTIME_DIR/xdg-config" \
+    "$LHCI_RUNTIME_DIR/chrome-profile"
+}
+
+run_lhci_with_timeout() {
+  timeout --foreground "$WEB_AUDIT_LHCI_TIMEOUT" env \
+    TMPDIR="$LHCI_RUNTIME_DIR/tmp" \
+    TMP="$LHCI_RUNTIME_DIR/tmp" \
+    TEMP="$LHCI_RUNTIME_DIR/tmp" \
+    XDG_CACHE_HOME="$LHCI_RUNTIME_DIR/xdg-cache" \
+    XDG_CONFIG_HOME="$LHCI_RUNTIME_DIR/xdg-config" \
+    CHROME_PATH="$WEB_AUDIT_CHROME_PATH" \
+    "${LHCI_CMD[@]}" "$@"
+}
+
+count_saved_lhci_reports() {
+  local target_dir="$1"
+
+  find "$target_dir/.lighthouseci" -maxdepth 1 -type f -name 'lhr-*.json' 2>/dev/null | wc -l | tr -d ' '
+}
+
+remove_wsl_chrome_launcher_dirs() {
+  local target_dir="$1"
+
+  find "$target_dir" -maxdepth 1 -type d -name 'C:*' -exec rm -rf {} + 2>/dev/null || true
 }
 
 install_docker_if_missing() {
@@ -638,6 +694,28 @@ install_docker_if_missing() {
   run_systemctl enable --now docker
   DOCKER_USED_IN_THIS_RUN=true
   set_docker_command
+}
+
+check_docker_free_space() {
+  local docker_root
+  local check_path
+  local available_kb
+  local available_gb
+  local required_kb
+
+  [[ "$WEB_AUDIT_SITESPEED_MIN_FREE_GB" =~ ^[0-9]+$ ]] || fail "WEB_AUDIT_SITESPEED_MIN_FREE_GB must be numeric"
+  docker_root="$(docker_cmd info --format '{{.DockerRootDir}}' 2>/dev/null || printf '/var/lib/docker')"
+  check_path="$docker_root"
+  [[ -d "$check_path" ]] || check_path="/var/lib/docker"
+  [[ -d /var/lib/containerd ]] && check_path="/var/lib/containerd"
+
+  available_kb="$(df -Pk "$check_path" | awk 'NR == 2 {print $4}')"
+  required_kb=$(( WEB_AUDIT_SITESPEED_MIN_FREE_GB * 1024 * 1024 ))
+  available_gb=$(( available_kb / 1024 / 1024 ))
+
+  if (( available_kb < required_kb )); then
+    fail "Not enough free disk space for sitespeed.io Docker image. Need at least ${WEB_AUDIT_SITESPEED_MIN_FREE_GB}GB free on $check_path, available: ${available_gb}GB. Run lighthouse-only or free disk space."
+  fi
 }
 
 pull_sitespeed_image_if_missing() {
@@ -703,6 +781,15 @@ write_metadata() {
     }' > "$REPORT_ROOT/metadata.json"
 }
 
+mark_failed_metadata_if_needed() {
+  local exit_code="$1"
+
+  (( exit_code != 0 )) || return 0
+  [[ -n "${REPORT_ROOT:-}" && -d "${REPORT_ROOT:-}" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  write_metadata "failed" >/dev/null 2>&1 || true
+}
+
 write_lhci_config() {
   local target_dir="$1"
   local node_path
@@ -711,10 +798,19 @@ write_lhci_config() {
   TEST_URL="$TEST_URL" \
   WEB_AUDIT_LHCI_RUNS="$WEB_AUDIT_LHCI_RUNS" \
   WEB_AUDIT_LHCI_CHROME_FLAGS="$WEB_AUDIT_LHCI_CHROME_FLAGS" \
+  WEB_AUDIT_LHCI_CHROME_USER_DATA_DIR="${LHCI_RUNTIME_DIR:-}/chrome-profile" \
   WEB_AUDIT_CHROME_PATH="$WEB_AUDIT_CHROME_PATH" \
   WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD="$WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD" \
   WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP="$WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP" \
     "$node_path" <<'NODE' > "$target_dir/lighthouserc.json"
+const chromeFlags = [
+  process.env.WEB_AUDIT_LHCI_CHROME_FLAGS ||
+    '--no-sandbox --disable-dev-shm-usage --disable-gpu --disable-setuid-sandbox',
+  process.env.WEB_AUDIT_LHCI_CHROME_USER_DATA_DIR
+    ? `--user-data-dir=${process.env.WEB_AUDIT_LHCI_CHROME_USER_DATA_DIR}`
+    : '',
+].filter(Boolean).join(' ');
+
 const config = {
   ci: {
     collect: {
@@ -722,7 +818,7 @@ const config = {
       numberOfRuns: Number(process.env.WEB_AUDIT_LHCI_RUNS || 1),
       chromePath: process.env.WEB_AUDIT_CHROME_PATH,
       settings: {
-        chromeFlags: process.env.WEB_AUDIT_LHCI_CHROME_FLAGS || '--no-sandbox --disable-dev-shm-usage --disable-gpu --disable-setuid-sandbox',
+        chromeFlags,
         maxWaitForLoad: Number(process.env.WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD || 45000),
         maxWaitForFcp: Number(process.env.WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP || 30000)
       }
@@ -742,6 +838,8 @@ NODE
 run_lighthouse_ci() {
   local target_dir="$REPORT_ROOT/lighthouse-ci"
   local log_file="$LOG_DIR/lighthouse-ci.log"
+  local lhci_status
+  local saved_report_count
 
   install_node_if_missing
   install_chrome_if_missing
@@ -749,18 +847,44 @@ run_lighthouse_ci() {
   preflight_lighthouse
 
   install -d -m 0755 "$target_dir"
+  prepare_lhci_runtime
   write_lhci_config "$target_dir"
 
   log "Running Lighthouse CI for $TEST_URL"
-  if ! (
+  set +e
+  (
     cd "$target_dir"
-    timeout --foreground "$WEB_AUDIT_LHCI_TIMEOUT" "${LHCI_CMD[@]}" collect --config=lighthouserc.json
-    timeout --foreground "$WEB_AUDIT_LHCI_TIMEOUT" "${LHCI_CMD[@]}" upload --config=lighthouserc.json
-  ) 2>&1 | tee "$log_file"; then
+    printf 'LHCI runtime directory: %s\n' "$LHCI_RUNTIME_DIR"
+
+    if ! run_lhci_with_timeout collect --config=lighthouserc.json; then
+      printf 'Lighthouse CI collect failed or timed out after %s.\n' "$WEB_AUDIT_LHCI_TIMEOUT"
+      exit 1
+    fi
+
+    remove_wsl_chrome_launcher_dirs "$target_dir"
+    saved_report_count="$(count_saved_lhci_reports "$target_dir")"
+    if (( saved_report_count < 1 )); then
+      printf 'Lighthouse CI collect finished, but saved 0 LHR files in %s/.lighthouseci.\n' "$target_dir"
+      exit 1
+    fi
+
+    if ! run_lhci_with_timeout upload --config=lighthouserc.json; then
+      printf 'Lighthouse CI upload failed or timed out after %s.\n' "$WEB_AUDIT_LHCI_TIMEOUT"
+      exit 1
+    fi
+  ) 2>&1 | tee "$log_file"
+  lhci_status=${PIPESTATUS[0]}
+  set -e
+
+  remove_wsl_chrome_launcher_dirs "$target_dir"
+  if (( lhci_status != 0 )); then
     fail "Lighthouse CI failed or timed out after $WEB_AUDIT_LHCI_TIMEOUT. See log: $log_file"
   fi
 
   [[ -f "$target_dir/reports/manifest.json" ]] || fail "Lighthouse CI report manifest was not created: $target_dir/reports/manifest.json"
+  jq -e 'type == "array" and length > 0' "$target_dir/reports/manifest.json" >/dev/null \
+    || fail "Lighthouse CI report manifest is empty. See log: $log_file"
+  cleanup_lhci_runtime
 }
 
 run_sitespeed() {
@@ -769,6 +893,7 @@ run_sitespeed() {
   local extra_args=()
 
   install_docker_if_missing
+  check_docker_free_space
   pull_sitespeed_image_if_missing
 
   install -d -m 0755 "$target_dir"
@@ -804,7 +929,7 @@ run_sitespeed() {
 }
 
 create_zip_archive() {
-  [[ "$WEB_AUDIT_CREATE_ZIP" == "true" ]] || return
+  [[ "$WEB_AUDIT_CREATE_ZIP" == "true" ]] || return 0
 
   ARCHIVE_FILE="$WEB_AUDIT_RESULTS_DIR/$SITE_SLUG/$RUN_ID.zip"
   log "Creating zip archive: $ARCHIVE_FILE"

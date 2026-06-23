@@ -141,6 +141,8 @@ The sitespeed.io image is pinned in `web-audits/.env` because changing image tag
 
 The sitespeed.io container is started as a one-shot container with `--rm`, a unique name, and labels for this module. If the script is interrupted, it stops that container. If Docker was inactive before the audit and the script started Docker only for this run, Docker is stopped again after the report is written. If Docker was already active, it is left alone so other services on the server keep running.
 
+Before pulling or running sitespeed.io, the script checks free disk space on the Docker/containerd filesystem. The default minimum is `8GB`; tune it with `WEB_AUDIT_SITESPEED_MIN_FREE_GB`.
+
 ## Report Layout
 
 Default:
@@ -184,7 +186,7 @@ WEB_AUDIT_CHROME_PATH=""
 WEB_AUDIT_LHCI_VERSION=latest
 WEB_AUDIT_LHCI_RUNS=1
 WEB_AUDIT_LHCI_CHROME_FLAGS="--no-sandbox --disable-dev-shm-usage --disable-gpu --disable-setuid-sandbox"
-WEB_AUDIT_LHCI_TIMEOUT=3m
+WEB_AUDIT_LHCI_TIMEOUT=5m
 WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD=45000
 WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP=30000
 WEB_AUDIT_SITESPEED_IMAGE=sitespeedio/sitespeed.io:41.3.3
@@ -192,6 +194,7 @@ WEB_AUDIT_SITESPEED_BROWSER=chrome
 WEB_AUDIT_SITESPEED_RUNS=3
 WEB_AUDIT_SITESPEED_CONNECTIVITY=native
 WEB_AUDIT_SITESPEED_DOCKER_SHM_SIZE=2g
+WEB_AUDIT_SITESPEED_MIN_FREE_GB=8
 WEB_AUDIT_SITESPEED_TIMEOUT=30m
 WEB_AUDIT_SITESPEED_EXTRA_ARGS=""
 WEB_AUDIT_CREATE_ZIP=true
@@ -203,8 +206,11 @@ WEB_AUDIT_STOP_DOCKER_AFTER_RUN=true
 Lighthouse should not run for tens of minutes on one page. The module uses two layers of protection:
 
 * `WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD` and `WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP` are passed into Lighthouse settings in milliseconds.
-* `WEB_AUDIT_LHCI_TIMEOUT` wraps the whole `lhci collect` command.
+* `WEB_AUDIT_LHCI_TIMEOUT` wraps each `lhci collect` and `lhci upload` command.
 * Before running Lighthouse, the script starts Chrome in headless mode with a 30 second smoke test.
+* During `lhci collect`, the script forces temporary Chrome and LHCI files into a Linux `/tmp/web-audits-lhci-*` directory. This avoids WSL creating `C:\Users\...` profile directories inside the report folder.
+
+After `lhci collect`, the script requires at least one saved LHR file before running `lhci upload`. If Lighthouse times out and saves zero reports, the run fails immediately instead of creating an empty `manifest.json`.
 
 If the log stops around `Run #1...` and then shows `Unable to connect to Chrome`, check that the server is using Linux Node.js and Linux Chrome, not Windows `node.exe` or Windows Chrome from WSL. The report log usually exposes this through paths like `/mnt/c/Users/.../lighthouse...`.
 
