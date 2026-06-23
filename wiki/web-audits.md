@@ -56,8 +56,16 @@ For Lighthouse CI without `sudo`, the user needs:
 
 * write access to `web-audits/` for local tools and reports
 * `node` and `npm` already installed
-* Linux Google Chrome, Google Chrome Stable, or Chromium already installed and available in `PATH`
+* `google-chrome-stable` installed in Linux; `chromium` also works if it is already installed
 * `jq`, `zip`, `tar`, and `curl` already installed
+
+Preferred Chrome package:
+
+```bash
+sudo apt install -y google-chrome-stable
+```
+
+If the Google Chrome apt repository is not configured yet, run `run-web-audit.sh` once with `sudo` rights or ask an admin to install Chrome. The script configures the Google Chrome apt repository and installs `google-chrome-stable` automatically when it has permission.
 
 Lighthouse CI CLI is module-local: `run-web-audit.sh` uses `web-audits/.tools/lhci/node_modules/.bin/lhci` and installs it there when it is missing. Global `lhci` installations are ignored for reproducible runs.
 

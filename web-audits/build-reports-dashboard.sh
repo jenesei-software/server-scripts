@@ -6,15 +6,15 @@ DEFAULT_REPORTS_DIR="$SCRIPT_DIR/reports"
 
 usage() {
   cat <<USAGE
-Usage:
+Использование:
   bash build-reports-dashboard.sh [reports_dir] [output_dir]
 
-Examples:
+Примеры:
   bash build-reports-dashboard.sh
   bash build-reports-dashboard.sh /path/to/web-audits/reports
   bash build-reports-dashboard.sh /path/to/reports /path/to/output
 
-The script reads existing web-audits report folders and writes:
+Скрипт читает готовые папки отчетов web-audits и создает:
   index.html
   summary.txt
   summary.json
@@ -44,7 +44,7 @@ source_nvm_if_available
 NODE_BIN="$(command -v node || true)"
 
 if [[ -z "$NODE_BIN" ]]; then
-  printf 'ERROR: Node.js is required to build the aggregate report.\n' >&2
+  printf 'ERROR: Для сборки сводного отчета нужен Node.js.\n' >&2
   exit 1
 fi
 
@@ -58,9 +58,9 @@ const outputDir = path.resolve(outputDirArg);
 const generatedAt = new Date();
 
 const SCORE_KEYS = [
-  ['performance', 'Performance', '#1d7a8c'],
-  ['accessibility', 'Accessibility', '#4d7c0f'],
-  ['bestPractices', 'Best Practices', '#7c3aed'],
+  ['performance', 'Производительность', '#1d7a8c'],
+  ['accessibility', 'Доступность', '#4d7c0f'],
+  ['bestPractices', 'Практики', '#7c3aed'],
   ['seo', 'SEO', '#b45309'],
 ];
 
@@ -71,6 +71,20 @@ const METRIC_KEYS = [
   ['cls', 'CLS', ''],
   ['speedIndex', 'Speed Index', 'ms'],
 ];
+
+const STATUS_LABELS = {
+  completed: 'завершено',
+  failed: 'ошибка',
+  running: 'в процессе',
+  unknown: 'неизвестно',
+};
+
+const TEST_TYPE_LABELS = {
+  all: 'все',
+  lighthouse: 'lighthouse',
+  sitespeed: 'sitespeed',
+  unknown: 'неизвестно',
+};
 
 function fail(message) {
   process.stderr.write(`ERROR: ${message}\n`);
@@ -174,6 +188,23 @@ function domainFromUrl(rawUrl) {
       return new URL(`https://${rawUrl}`).hostname;
     } catch (_) {
       return '';
+    }
+  }
+}
+
+function targetFromUrl(rawUrl, fallback = '') {
+  if (!rawUrl) return fallback;
+  try {
+    const url = new URL(rawUrl);
+    url.hash = '';
+    return url.href;
+  } catch (_) {
+    try {
+      const url = new URL(`https://${rawUrl}`);
+      url.hash = '';
+      return url.href;
+    } catch (_) {
+      return rawUrl || fallback;
     }
   }
 }
@@ -363,6 +394,26 @@ function relativeLink(filePath) {
   return encodeURI(rel || '.');
 }
 
+function normalizeStatus(status) {
+  const value = String(status || 'unknown').toLowerCase();
+  if (['complete', 'completed', 'success', 'ok'].includes(value)) return 'completed';
+  if (['failed', 'failure', 'error'].includes(value)) return 'failed';
+  if (['running', 'in-progress', 'in_progress'].includes(value)) return 'running';
+  return 'unknown';
+}
+
+function statusLabel(status) {
+  return STATUS_LABELS[status] || status;
+}
+
+function testTypeLabel(testType) {
+  return TEST_TYPE_LABELS[testType] || testType || TEST_TYPE_LABELS.unknown;
+}
+
+function hasLighthouseResult(run) {
+  return Boolean(run && run.lighthouse && run.lighthouse.available);
+}
+
 function collectRuns() {
   const metadataFiles = findMetadataFiles(reportsDir);
   const runs = [];
@@ -375,12 +426,16 @@ function collectRuns() {
     const runId = metadata.runId || path.basename(runDir);
     const siteSlug = parentName(metadataPath, 2);
     const domain = domainFromUrl(metadata.url) || siteSlug;
+    const target = targetFromUrl(metadata.url, domain || siteSlug);
     const timestamp = parseRunDate(runId, metadata.updatedAt);
     const server = serverInfoFromMetadata(metadata);
     const lighthouse = summarizeLighthouse(runDir);
     const sitespeed = summarizeSitespeed(runDir);
+    const status = normalizeStatus(metadata.status);
+    const testType = metadata.testType || 'unknown';
 
     runs.push({
+      target,
       domain,
       siteSlug,
       url: metadata.url || '',
@@ -388,8 +443,11 @@ function collectRuns() {
       runDir,
       runLink: relativeLink(runDir),
       reportLink: relativeLink(lighthouse.reportHtml),
-      status: metadata.status || 'unknown',
-      testType: metadata.testType || 'unknown',
+      status,
+      statusRaw: metadata.status || 'unknown',
+      statusLabel: statusLabel(status),
+      testType,
+      testTypeLabel: testTypeLabel(testType),
       timestamp: timestamp ? timestamp.toISOString() : null,
       timestampMs: timestamp ? timestamp.getTime() : 0,
       timestampLabel: formatDate(timestamp),
@@ -400,16 +458,23 @@ function collectRuns() {
     });
   }
 
-  return runs.sort((a, b) => a.timestampMs - b.timestampMs || a.domain.localeCompare(b.domain));
+  return runs.sort((a, b) => a.timestampMs - b.timestampMs || a.target.localeCompare(b.target));
 }
 
-function latestByDomain(runs) {
+function latestByTarget(runs, predicate = () => true, options = {}) {
   const map = new Map();
-  for (const run of runs) {
-    const current = map.get(run.domain);
-    if (!current || run.timestampMs >= current.timestampMs) map.set(run.domain, run);
+  const eligibleRuns = runs.filter(predicate);
+  const sourceRuns = eligibleRuns.length ? eligibleRuns : (options.fallback === false ? [] : runs);
+
+  for (const run of sourceRuns) {
+    const current = map.get(run.target);
+    if (!current || run.timestampMs >= current.timestampMs) map.set(run.target, run);
   }
-  return Array.from(map.values()).sort((a, b) => a.domain.localeCompare(b.domain));
+  return Array.from(map.values()).sort((a, b) => a.target.localeCompare(b.target));
+}
+
+function latestResultsByTarget(runs) {
+  return latestByTarget(runs, hasLighthouseResult, {fallback: false});
 }
 
 function groupBy(items, getter) {
@@ -423,17 +488,21 @@ function groupBy(items, getter) {
 }
 
 function summarizeRuns(name, runs) {
+  const targets = new Set(runs.map(run => run.target));
   const domains = new Set(runs.map(run => run.domain));
   const completed = runs.filter(run => run.status === 'completed').length;
   const failed = runs.filter(run => run.status === 'failed').length;
+  const running = runs.filter(run => run.status === 'running').length;
   const lighthouseRuns = runs.filter(run => run.lighthouse.available);
 
   return {
     name,
     runCount: runs.length,
+    targetCount: targets.size,
     domainCount: domains.size,
     completed,
     failed,
+    running,
     latest: runs.length ? runs.reduce((latest, run) => run.timestampMs > latest.timestampMs ? run : latest, runs[0]).timestampLabel : 'unknown',
     scores: Object.fromEntries(SCORE_KEYS.map(([key]) => [
       key,
@@ -447,12 +516,12 @@ function summarizeRuns(name, runs) {
 }
 
 function fmt(value, suffix = '') {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return 'n/a';
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 'нет данных';
   return `${value}${suffix}`;
 }
 
 function fmtMetric(value, key) {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return 'n/a';
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 'нет данных';
   if (key === 'cls') return String(value);
   return `${value} ms`;
 }
@@ -480,19 +549,21 @@ function scoreCell(score) {
 function statGrid(summary) {
   return `
     <div class="stats">
-      <div><span>Runs</span><strong>${summary.runCount}</strong></div>
-      <div><span>Domains</span><strong>${summary.domainCount}</strong></div>
-      <div><span>Completed</span><strong>${summary.completed}</strong></div>
-      <div><span>Failed</span><strong>${summary.failed}</strong></div>
-      <div><span>Avg Performance</span><strong>${fmt(summary.scores.performance)}</strong></div>
-      <div><span>Latest Run</span><strong>${esc(summary.latest)}</strong></div>
+      <div><span>Запусков</span><strong>${summary.runCount}</strong></div>
+      <div><span>URL</span><strong>${summary.targetCount}</strong></div>
+      <div><span>Доменов</span><strong>${summary.domainCount}</strong></div>
+      <div><span>Завершено</span><strong>${summary.completed}</strong></div>
+      <div><span>В процессе</span><strong>${summary.running}</strong></div>
+      <div><span>Ошибок</span><strong>${summary.failed}</strong></div>
+      <div><span>Средняя производительность</span><strong>${fmt(summary.scores.performance)}</strong></div>
+      <div><span>Последний запуск</span><strong>${esc(summary.latest)}</strong></div>
     </div>`;
 }
 
 function scoreBarChart(title, rows, options = {}) {
   const metrics = options.metrics || SCORE_KEYS;
   const limitedRows = rows.slice(0, options.limit || 40);
-  if (!limitedRows.length) return emptySection(title, 'No rows available.');
+  if (!limitedRows.length) return emptySection(title, 'Нет данных для отображения.');
 
   return `
     <section>
@@ -524,20 +595,20 @@ function scoreBarChart(title, rows, options = {}) {
 }
 
 function trendChart(title, runs) {
-  const byDomain = groupBy(
+  const byTarget = groupBy(
     runs.filter(run => typeof run.lighthouse.scores.performance === 'number'),
-    run => run.domain
+    run => run.target
   );
-  const series = Array.from(byDomain.entries())
-    .map(([domain, domainRuns]) => [domain, domainRuns.sort((a, b) => a.timestampMs - b.timestampMs)])
-    .filter(([, domainRuns]) => domainRuns.length >= 2)
+  const series = Array.from(byTarget.entries())
+    .map(([target, targetRuns]) => [target, targetRuns.sort((a, b) => a.timestampMs - b.timestampMs)])
+    .filter(([, targetRuns]) => targetRuns.length >= 2)
     .slice(0, 12);
 
   if (!series.length) {
-    return emptySection(title, 'At least two Lighthouse runs per domain are needed for a trend chart.');
+    return emptySection(title, 'Для графика динамики нужно минимум два Lighthouse-запуска по одному URL.');
   }
 
-  const timestamps = series.flatMap(([, domainRuns]) => domainRuns.map(run => run.timestampMs));
+  const timestamps = series.flatMap(([, targetRuns]) => targetRuns.map(run => run.timestampMs));
   const minTime = Math.min(...timestamps);
   const maxTime = Math.max(...timestamps);
   const width = 920;
@@ -561,25 +632,25 @@ function trendChart(title, runs) {
     return `<line x1="${pad.left}" y1="${yy}" x2="${width - pad.right}" y2="${yy}" class="grid-line"></line><text x="10" y="${yy + 4}" class="axis-label">${score}</text>`;
   }).join('');
 
-  const paths = series.map(([domain, domainRuns], index) => {
+  const paths = series.map(([target, targetRuns], index) => {
     const color = palette[index % palette.length];
-    const points = domainRuns.map(run => [x(run.timestampMs), y(run.lighthouse.scores.performance), run]);
+    const points = targetRuns.map(run => [x(run.timestampMs), y(run.lighthouse.scores.performance), run]);
     const pathData = points.map(([px, py], pointIndex) => `${pointIndex === 0 ? 'M' : 'L'} ${px.toFixed(1)} ${py.toFixed(1)}`).join(' ');
     return `
       <path d="${pathData}" fill="none" stroke="${color}" stroke-width="2.5"></path>
-      ${points.map(([px, py, run]) => `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="3.5" fill="${color}"><title>${esc(domain)}: ${fmt(run.lighthouse.scores.performance)} at ${esc(run.timestampLabel)}</title></circle>`).join('')}`;
+      ${points.map(([px, py, run]) => `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="3.5" fill="${color}"><title>${esc(target)}: ${fmt(run.lighthouse.scores.performance)} на ${esc(run.timestampLabel)}</title></circle>`).join('')}`;
   }).join('');
 
-  const legend = series.map(([domain], index) => {
+  const legend = series.map(([target], index) => {
     const color = palette[index % palette.length];
-    return `<span><i style="background:${color}"></i>${esc(domain)}</span>`;
+    return `<span><i style="background:${color}"></i>${esc(target)}</span>`;
   }).join('');
 
   return `
     <section>
       <div class="section-heading">
         <h2>${esc(title)}</h2>
-        <p>Performance score over time. The chart includes up to 12 domains with at least two runs.</p>
+        <p>Динамика оценки производительности. На график попадает до 12 URL, у которых есть минимум два готовых Lighthouse-запуска. Если здесь один URL, значит только по нему сейчас достаточно точек для линии.</p>
       </div>
       <svg class="trend-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(title)}">
         <rect x="0" y="0" width="${width}" height="${height}" rx="8" class="chart-bg"></rect>
@@ -601,7 +672,7 @@ function emptySection(title, message) {
 }
 
 function latestRowsTable(title, rows) {
-  if (!rows.length) return emptySection(title, 'No rows available.');
+  if (!rows.length) return emptySection(title, 'Нет данных для отображения.');
 
   return `
     <section>
@@ -610,33 +681,31 @@ function latestRowsTable(title, rows) {
         <table>
           <thead>
             <tr>
-              <th>Domain</th>
-              <th>Latest</th>
-              <th>Server</th>
-              <th>Status</th>
+              <th>URL</th>
+              <th>Последний результат</th>
+              <th>Сервер</th>
+              <th>Статус</th>
               <th>Perf</th>
               <th>A11y</th>
               <th>BP</th>
               <th>SEO</th>
               <th>LCP</th>
               <th>TBT</th>
-              <th>Report</th>
             </tr>
           </thead>
           <tbody>
             ${rows.map(run => `
               <tr>
-                <td><strong>${esc(run.domain)}</strong><br><span>${esc(run.url)}</span></td>
+                <td><strong>${esc(run.target)}</strong><br><span>${esc(run.domain)}</span></td>
                 <td>${esc(run.timestampLabel)}<br><span>${esc(run.runId)}</span></td>
                 <td>${esc(run.server.key)}</td>
-                <td><span class="status status-${esc(run.status)}">${esc(run.status)}</span><br><span>${esc(run.testType)}</span></td>
+                <td><span class="status status-${esc(run.status)}">${esc(run.statusLabel)}</span><br><span>${esc(run.testTypeLabel)}</span></td>
                 <td>${scoreCell(run.lighthouse.scores.performance)}</td>
                 <td>${scoreCell(run.lighthouse.scores.accessibility)}</td>
                 <td>${scoreCell(run.lighthouse.scores.bestPractices)}</td>
                 <td>${scoreCell(run.lighthouse.scores.seo)}</td>
                 <td>${esc(fmtMetric(run.lighthouse.metrics.lcp, 'lcp'))}</td>
                 <td>${esc(fmtMetric(run.lighthouse.metrics.tbt, 'tbt'))}</td>
-                <td>${run.reportLink ? `<a href="${esc(run.reportLink)}">Lighthouse</a><br>` : ''}<a href="${esc(run.runLink)}">Folder</a></td>
               </tr>`).join('')}
           </tbody>
         </table>
@@ -645,7 +714,7 @@ function latestRowsTable(title, rows) {
 }
 
 function allRunsTable(title, rows) {
-  if (!rows.length) return emptySection(title, 'No rows available.');
+  if (!rows.length) return emptySection(title, 'Нет данных для отображения.');
 
   return `
     <section>
@@ -654,11 +723,11 @@ function allRunsTable(title, rows) {
         <table>
           <thead>
             <tr>
-              <th>Domain</th>
-              <th>Run</th>
-              <th>Server</th>
-              <th>Status</th>
-              <th>LHCI Runs</th>
+              <th>URL</th>
+              <th>Запуск</th>
+              <th>Сервер</th>
+              <th>Статус</th>
+              <th>LHCI запусков</th>
               <th>Perf</th>
               <th>FCP</th>
               <th>LCP</th>
@@ -669,10 +738,10 @@ function allRunsTable(title, rows) {
           <tbody>
             ${rows.slice().reverse().map(run => `
               <tr>
-                <td>${esc(run.domain)}</td>
+                <td>${esc(run.target)}<br><span>${esc(run.domain)}</span></td>
                 <td>${esc(run.timestampLabel)}<br><span>${esc(run.runId)}</span></td>
                 <td>${esc(run.server.key)}</td>
-                <td><span class="status status-${esc(run.status)}">${esc(run.status)}</span></td>
+                <td><span class="status status-${esc(run.status)}">${esc(run.statusLabel)}</span><br><span>${esc(run.testTypeLabel)}</span></td>
                 <td>${run.lighthouse.reportCount || 0}</td>
                 <td>${scoreCell(run.lighthouse.scores.performance)}</td>
                 <td>${esc(fmtMetric(run.lighthouse.metrics.fcp, 'fcp'))}</td>
@@ -692,20 +761,20 @@ function serverSections(runs) {
 
   return groups.map(([serverKey, serverRuns]) => {
     const summary = summarizeRuns(serverKey, serverRuns);
-    const latest = latestByDomain(serverRuns);
+    const latest = latestResultsByTarget(serverRuns);
     const chartRows = latest
-      .map(run => ({label: run.domain, values: run.lighthouse.scores}))
+      .map(run => ({label: run.target, values: run.lighthouse.scores}))
       .sort((a, b) => (b.values.performance ?? -1) - (a.values.performance ?? -1));
 
     return `
       <section class="server-section">
         <div class="section-heading">
-          <h2>Server: ${esc(serverKey)}</h2>
-          <p>Hostname/IP grouping is taken from each run's metadata.json auditSource block.</p>
+          <h2>Сервер: ${esc(serverKey)}</h2>
+          <p>Группировка берется из блока <code>auditSource</code> в каждом <code>metadata.json</code>.</p>
         </div>
         ${statGrid(summary)}
-        ${scoreBarChart(`Latest domain scores on ${serverKey}`, chartRows, {limit: 30})}
-        ${latestRowsTable(`Latest rows on ${serverKey}`, latest)}
+        ${scoreBarChart(`Последние оценки URL на ${serverKey}`, chartRows, {limit: 30})}
+        ${latestRowsTable(`Последние результаты на ${serverKey}`, latest)}
       </section>`;
   }).join('');
 }
@@ -723,10 +792,11 @@ function textTable(rows, columns) {
 
 function buildTextReport(runs, latest, serverSummaries, overall) {
   const latestColumns = [
-    {label: 'Domain', value: run => run.domain},
-    {label: 'Latest', value: run => run.timestampLabel},
-    {label: 'Server', value: run => run.server.key},
-    {label: 'Status', value: run => run.status},
+    {label: 'URL', value: run => run.target},
+    {label: 'Домен', value: run => run.domain},
+    {label: 'Дата', value: run => run.timestampLabel},
+    {label: 'Сервер', value: run => run.server.key},
+    {label: 'Статус', value: run => run.statusLabel},
     {label: 'Perf', value: run => fmt(run.lighthouse.scores.performance)},
     {label: 'A11y', value: run => fmt(run.lighthouse.scores.accessibility)},
     {label: 'BP', value: run => fmt(run.lighthouse.scores.bestPractices)},
@@ -736,58 +806,62 @@ function buildTextReport(runs, latest, serverSummaries, overall) {
   ];
 
   const serverColumns = [
-    {label: 'Server', value: row => row.name},
-    {label: 'Runs', value: row => row.runCount},
-    {label: 'Domains', value: row => row.domainCount},
-    {label: 'Completed', value: row => row.completed},
-    {label: 'Failed', value: row => row.failed},
-    {label: 'Avg Perf', value: row => fmt(row.scores.performance)},
-    {label: 'Avg LCP', value: row => fmtMetric(row.metrics.lcp, 'lcp')},
+    {label: 'Сервер', value: row => row.name},
+    {label: 'Запусков', value: row => row.runCount},
+    {label: 'URL', value: row => row.targetCount},
+    {label: 'Доменов', value: row => row.domainCount},
+    {label: 'Завершено', value: row => row.completed},
+    {label: 'В процессе', value: row => row.running},
+    {label: 'Ошибок', value: row => row.failed},
+    {label: 'Ср. Perf', value: row => fmt(row.scores.performance)},
+    {label: 'Ср. LCP', value: row => fmtMetric(row.metrics.lcp, 'lcp')},
   ];
 
   return [
-    'Web Audits Aggregate Report',
-    `Generated: ${formatDate(generatedAt)}`,
-    `Input directory: ${reportsDir}`,
-    `Output directory: ${outputDir}`,
+    'Сводный отчет Web Audits',
+    `Создан: ${formatDate(generatedAt)}`,
+    `Папка с отчетами: ${reportsDir}`,
+    `Папка результата: ${outputDir}`,
     '',
-    'Overall',
-    `Runs: ${overall.runCount}`,
-    `Domains: ${overall.domainCount}`,
-    `Completed: ${overall.completed}`,
-    `Failed: ${overall.failed}`,
-    `Average performance: ${fmt(overall.scores.performance)}`,
-    `Average LCP: ${fmtMetric(overall.metrics.lcp, 'lcp')}`,
+    'Общая сводка',
+    `Запусков: ${overall.runCount}`,
+    `URL: ${overall.targetCount}`,
+    `Доменов: ${overall.domainCount}`,
+    `Завершено: ${overall.completed}`,
+    `В процессе: ${overall.running}`,
+    `Ошибок: ${overall.failed}`,
+    `Средняя производительность: ${fmt(overall.scores.performance)}`,
+    `Средний LCP: ${fmtMetric(overall.metrics.lcp, 'lcp')}`,
     '',
-    'Latest Results By Domain',
-    latest.length ? textTable(latest, latestColumns) : 'No domain rows found.',
+    'Последние результаты по URL',
+    latest.length ? textTable(latest, latestColumns) : 'Данные по URL не найдены.',
     '',
-    'Servers',
-    serverSummaries.length ? textTable(serverSummaries, serverColumns) : 'No server rows found.',
+    'Серверы',
+    serverSummaries.length ? textTable(serverSummaries, serverColumns) : 'Данные по серверам не найдены.',
     '',
-    'All Runs',
+    'Все запуски',
     runs.length ? textTable(runs.slice().reverse(), [
-      {label: 'Domain', value: run => run.domain},
-      {label: 'Run', value: run => run.runId},
-      {label: 'Date', value: run => run.timestampLabel},
-      {label: 'Server', value: run => run.server.key},
-      {label: 'Status', value: run => run.status},
+      {label: 'URL', value: run => run.target},
+      {label: 'Домен', value: run => run.domain},
+      {label: 'Запуск', value: run => run.runId},
+      {label: 'Дата', value: run => run.timestampLabel},
+      {label: 'Сервер', value: run => run.server.key},
+      {label: 'Статус', value: run => run.statusLabel},
       {label: 'Perf', value: run => fmt(run.lighthouse.scores.performance)},
-      {label: 'Report Dir', value: run => run.runDir},
-    ]) : 'No runs found.',
+    ]) : 'Запуски не найдены.',
     '',
   ].join('\n');
 }
 
 function buildHtml(runs) {
-  const latest = latestByDomain(runs);
-  const overall = summarizeRuns('Overall', runs);
+  const latest = latestResultsByTarget(runs);
+  const overall = summarizeRuns('Общий итог', runs);
   const serverSummaries = Array.from(groupBy(runs, run => run.server.key).entries())
     .map(([serverKey, serverRuns]) => summarizeRuns(serverKey, serverRuns))
     .sort((a, b) => a.name.localeCompare(b.name));
 
   const latestChartRows = latest
-    .map(run => ({label: run.domain, values: run.lighthouse.scores}))
+    .map(run => ({label: run.target, values: run.lighthouse.scores}))
     .sort((a, b) => (b.values.performance ?? -1) - (a.values.performance ?? -1));
 
   const serverChartRows = serverSummaries
@@ -797,11 +871,11 @@ function buildHtml(runs) {
   const textReport = buildTextReport(runs, latest, serverSummaries, overall);
 
   const html = `<!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Web Audits Aggregate Report</title>
+  <title>Сводный отчет Web Audits</title>
   <style>
     :root {
       --bg: #f6f8fb;
@@ -957,6 +1031,7 @@ function buildHtml(runs) {
       background: var(--none);
     }
     .status-completed { background: var(--good); }
+    .status-running { background: var(--mid); }
     .status-failed { background: var(--bad); }
     .trend-chart {
       display: block;
@@ -998,32 +1073,32 @@ function buildHtml(runs) {
 </head>
 <body>
   <header>
-    <h1>Web Audits Aggregate Report</h1>
+    <h1>Сводный отчет Web Audits</h1>
     <div class="meta">
-      <span>Generated: ${esc(formatDate(generatedAt))}</span>
-      <span>Input: <code>${esc(reportsDir)}</code></span>
-      <span>Runs: ${runs.length}</span>
-      <span>Domains: ${latest.length}</span>
+      <span>Создан: ${esc(formatDate(generatedAt))}</span>
+      <span>Источник: <code>${esc(reportsDir)}</code></span>
+      <span>Запусков: ${runs.length}</span>
+      <span>URL с результатами: ${latest.length}</span>
     </div>
   </header>
   <main>
     <section>
       <div class="section-heading">
-        <h2>Overall Summary</h2>
-        <p>Scores are averaged from saved Lighthouse result JSON files. Latest domain rows use the newest run found for each domain.</p>
+        <h2>Общая сводка</h2>
+        <p>Оценки считаются по сохраненным JSON-результатам Lighthouse. Последние строки по URL берут самый свежий запуск, где уже есть реальные Lighthouse-данные.</p>
       </div>
       ${statGrid(overall)}
     </section>
-    ${scoreBarChart('Latest Scores By Domain', latestChartRows, {limit: 40})}
-    ${scoreBarChart('Average Scores By Audit Server', serverChartRows, {limit: 40})}
-    ${trendChart('Performance Trend By Domain', runs)}
-    ${latestRowsTable('Latest Results By Domain', latest)}
+    ${scoreBarChart('Последние оценки по URL', latestChartRows, {limit: 40})}
+    ${scoreBarChart('Средние оценки по серверам проверки', serverChartRows, {limit: 40})}
+    ${trendChart('Динамика производительности по URL', runs)}
+    ${latestRowsTable('Последние результаты по URL', latest)}
     ${serverSections(runs)}
-    ${allRunsTable('All Runs', runs)}
+    ${allRunsTable('Все запуски', runs)}
     <section>
       <div class="section-heading">
-        <h2>Text Summary</h2>
-        <p>The same summary is also written to <code>summary.txt</code>.</p>
+        <h2>Текстовая сводка</h2>
+        <p>Та же сводка записывается в <code>summary.txt</code>.</p>
       </div>
       <pre>${esc(textReport)}</pre>
     </section>
@@ -1034,10 +1109,10 @@ function buildHtml(runs) {
   return {html, textReport, latest, serverSummaries, overall};
 }
 
-if (!isDirectory(reportsDir)) fail(`Reports directory not found: ${reportsDir}`);
+if (!isDirectory(reportsDir)) fail(`Папка с отчетами не найдена: ${reportsDir}`);
 
 const runs = collectRuns();
-if (!runs.length) fail(`No metadata.json files found under: ${reportsDir}`);
+if (!runs.length) fail(`Внутри папки не найдены metadata.json: ${reportsDir}`);
 
 const built = buildHtml(runs);
 fs.mkdirSync(outputDir, {recursive: true});
@@ -1049,11 +1124,12 @@ fs.writeFileSync(path.join(outputDir, 'summary.json'), JSON.stringify({
   outputDir,
   overall: built.overall,
   servers: built.serverSummaries,
+  latestByUrl: built.latest,
   latestByDomain: built.latest,
   runs,
 }, null, 2));
 
-process.stdout.write(`Aggregate report written:\n`);
+process.stdout.write(`Сводный отчет создан:\n`);
 process.stdout.write(`  ${path.join(outputDir, 'index.html')}\n`);
 process.stdout.write(`  ${path.join(outputDir, 'summary.txt')}\n`);
 process.stdout.write(`  ${path.join(outputDir, 'summary.json')}\n`);

@@ -1004,7 +1004,7 @@ main() {
       ;;
   esac
 
-  write_metadata "complete"
+  write_metadata "completed"
   create_zip_archive
   write_summary
 
