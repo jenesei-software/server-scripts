@@ -26,7 +26,6 @@ Docker is installed automatically by this module when it is missing.
 ```text
 netdata/
 |-- env.example
-|-- README.md
 |-- setup-netdata.sh
 `-- check-setup.sh
 ```

@@ -36,48 +36,43 @@ Service user model: [wiki/service-users.md](wiki/service-users.md)
 |-- README.md
 |-- caddy/
 |   |-- env.example
-|   |-- README.md
 |   |-- check-setup.sh
 |   `-- setup-caddy.sh
 |-- ghost/
 |   |-- env.example
-|   |-- README.md
 |   |-- check-setup.sh
 |   `-- setup-ghost.sh
 |-- netdata/
 |   |-- env.example
-|   |-- README.md
 |   |-- check-setup.sh
 |   `-- setup-netdata.sh
 |-- remnawave-node/
 |   |-- env.example
-|   |-- README.md
 |   |-- check-setup.sh
 |   `-- setup-remnawave-node.sh
 |-- remnawave-panel/
 |   |-- env.example
-|   |-- README.md
 |   |-- check-setup.sh
 |   |-- setup-remnawave-panel.sh
 |   `-- setup-subscription-page.sh
 |-- supabase/
 |   |-- env.example
-|   |-- README.md
 |   |-- check-setup.sh
 |   `-- setup-supabase.sh
 |-- uptime-kuma/
 |   |-- env.example
-|   |-- README.md
 |   |-- check-setup.sh
 |   `-- setup-uptime-kuma.sh
 |-- umami/
 |   |-- env.example
-|   |-- README.md
 |   |-- check-setup.sh
 |   `-- setup-umami.sh
+|-- web-audits/
+|   |-- env.example
+|   |-- check-setup.sh
+|   `-- run-web-audit.sh
 |-- ubuntu/
 |   |-- env.example
-|   |-- README.md
 |   |-- setup-ubuntu.sh
 |   `-- check-setup.sh
 `-- wiki/
@@ -90,6 +85,7 @@ Service user model: [wiki/service-users.md](wiki/service-users.md)
     |-- supabase.md
     |-- uptime-kuma.md
     |-- umami.md
+    |-- web-audits.md
     `-- ubuntu.md
 ```
 
@@ -256,6 +252,23 @@ bash check-setup.sh
 
 Documentation: [wiki/umami.md](wiki/umami.md)
 
+### `web-audits/`
+
+One-off website audits with Lighthouse CI and sitespeed.io.
+
+Use only `web-audits/.env`; the env file is optional:
+
+```bash
+cd ~/server-scripts/web-audits
+cp env.example .env
+nano .env
+bash run-web-audit.sh
+```
+
+Reports are saved under `web-audits/reports/<site>/<timestamp>/` and can be zipped for download to Windows.
+
+Documentation: [wiki/web-audits.md](wiki/web-audits.md)
+
 ## Firewall Summary
 
 The Ubuntu module opens:
@@ -289,4 +302,5 @@ The Caddy module installs UFW if needed and adds the HTTP/HTTPS rules. It does n
 * Put module-specific variables in that folder's `env.example`.
 * Make scripts default to that folder's `.env`.
 * Keep module docs in `wiki/<module>.md`.
+* Do not add module-level README files unless there is a specific reason.
 * Avoid reading root `.env` files.

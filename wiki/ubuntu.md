@@ -7,7 +7,6 @@ The `ubuntu/` module prepares a fresh Ubuntu server. It is isolated from other m
 ```text
 ubuntu/
 |-- env.example
-|-- README.md
 |-- setup-ubuntu.sh
 `-- check-setup.sh
 ```

@@ -28,7 +28,6 @@ Docker is installed automatically by this module when it is missing.
 ```text
 supabase/
 |-- env.example
-|-- README.md
 |-- setup-supabase.sh
 `-- check-setup.sh
 ```

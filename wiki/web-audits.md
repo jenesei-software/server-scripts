@@ -1,0 +1,181 @@
+# Web Audits Module
+
+The `web-audits/` module runs website performance and quality audits with Lighthouse CI and sitespeed.io.
+
+References:
+
+* https://github.com/GoogleChrome/lighthouse-ci/blob/main/docs/getting-started.md
+* https://googlechrome.github.io/lighthouse-ci/docs/configuration.html
+* https://www.sitespeed.io/documentation/sitespeed.io/installation/
+* https://www.sitespeed.io/documentation/sitespeed.io/docker/
+
+## Files
+
+```text
+web-audits/
+|-- env.example
+|-- run-web-audit.sh
+`-- check-setup.sh
+```
+
+## Run
+
+Interactive mode:
+
+```bash
+cd ~/server-scripts/web-audits
+bash run-web-audit.sh
+```
+
+Non-interactive mode:
+
+```bash
+cd ~/server-scripts/web-audits
+bash run-web-audit.sh https://example.com all
+```
+
+With a custom env file:
+
+```bash
+bash run-web-audit.sh .env https://example.com lighthouse
+```
+
+Test types:
+
+* `all`
+* `lighthouse`
+* `sitespeed`
+
+If the URL does not include a protocol, the script prepends `https://`.
+
+## Sparse Checkout
+
+You can keep only this module on a server and still use `git pull` by cloning the repository with sparse checkout:
+
+```bash
+ssh root@YOUR_SERVER_IP
+apt update && apt install -y git
+git clone --filter=blob:none --sparse https://github.com/jenesei-software/ubuntu.git server-scripts-web-audits
+cd server-scripts-web-audits
+git sparse-checkout set web-audits wiki/web-audits.md .gitattributes .gitignore
+```
+
+Run:
+
+```bash
+cd ~/server-scripts-web-audits/web-audits
+bash run-web-audit.sh https://example.com all
+```
+
+Update later:
+
+```bash
+cd ~/server-scripts-web-audits
+git pull
+```
+
+This works because sparse checkout still keeps the Git repository metadata. A downloaded zip of only `web-audits/` cannot use `git pull`.
+
+## Dependencies
+
+The script installs missing dependencies as root.
+
+Lighthouse CI dependencies:
+
+* Node.js
+* Google Chrome stable
+* `@lhci/cli`
+
+sitespeed.io dependencies:
+
+* Docker Engine
+* Docker Compose plugin
+* `sitespeedio/sitespeed.io:<tag>`
+
+The sitespeed.io image is pinned in `web-audits/.env` because changing image tags can change browser versions and report results.
+
+The sitespeed.io container is started as a one-shot container with `--rm`, a unique name, and labels for this module. If the script is interrupted, it stops that container. If Docker was inactive before the audit and the script started Docker only for this run, Docker is stopped again after the report is written. If Docker was already active, it is left alone so other services on the server keep running.
+
+## Report Layout
+
+Default:
+
+```text
+web-audits/reports/<site>/<timestamp>/
+```
+
+Inside a full run:
+
+```text
+<timestamp>/
+|-- lighthouse-ci/
+|   |-- lighthouserc.json
+|   `-- reports/
+|       |-- manifest.json
+|       |-- *.report.html
+|       `-- *.report.json
+|-- sitespeed/
+|   `-- sitespeed-result/
+|-- logs/
+|   |-- lighthouse-ci.log
+|   `-- sitespeed.log
+|-- metadata.json
+`-- summary.txt
+```
+
+If `WEB_AUDIT_CREATE_ZIP=true`, the script also creates:
+
+```text
+web-audits/reports/<site>/<timestamp>.zip
+```
+
+## Env
+
+```env
+WEB_AUDIT_RESULTS_DIR=reports
+WEB_AUDIT_DEFAULT_TEST=all
+WEB_AUDIT_NODE_MAJOR=22
+WEB_AUDIT_LHCI_VERSION=latest
+WEB_AUDIT_LHCI_RUNS=3
+WEB_AUDIT_SITESPEED_IMAGE=sitespeedio/sitespeed.io:41.3.3
+WEB_AUDIT_SITESPEED_BROWSER=chrome
+WEB_AUDIT_SITESPEED_RUNS=3
+WEB_AUDIT_SITESPEED_CONNECTIVITY=native
+WEB_AUDIT_CREATE_ZIP=true
+WEB_AUDIT_STOP_DOCKER_AFTER_RUN=true
+```
+
+## Download To Windows
+
+Download one archive from Windows PowerShell:
+
+```powershell
+scp root@SERVER_IP:/root/server-scripts/web-audits/reports/example.com/20260623-153000.zip C:\Users\YOUR_USER\Downloads\
+```
+
+With a custom SSH port:
+
+```powershell
+scp -P PORT root@SERVER_IP:/root/server-scripts/web-audits/reports/example.com/20260623-153000.zip C:\Users\YOUR_USER\Downloads\
+```
+
+Download all reports:
+
+```powershell
+scp -r root@SERVER_IP:/root/server-scripts/web-audits/reports C:\Users\YOUR_USER\Downloads\web-audits-reports
+```
+
+WinSCP path:
+
+```text
+/root/server-scripts/web-audits/reports
+```
+
+## Check
+
+```bash
+cd ~/server-scripts/web-audits
+bash check-setup.sh
+```
+
+The check script verifies installed commands, apt repository files, the configured sitespeed.io Docker image, and recent report archives.

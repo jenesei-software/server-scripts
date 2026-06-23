@@ -26,7 +26,6 @@ Docker is installed automatically by this module when it is missing.
 ```text
 uptime-kuma/
 |-- env.example
-|-- README.md
 |-- setup-uptime-kuma.sh
 `-- check-setup.sh
 ```

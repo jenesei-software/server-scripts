@@ -7,7 +7,6 @@ The `caddy/` module installs Caddy and can optionally write a reverse proxy Cadd
 ```text
 caddy/
 |-- env.example
-|-- README.md
 |-- check-setup.sh
 `-- setup-caddy.sh
 ```

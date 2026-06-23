@@ -9,7 +9,6 @@ Unlike the panel, the node is not served through Caddy. It uses `network_mode: h
 ```text
 remnawave-node/
 |-- env.example
-|-- README.md
 |-- setup-remnawave-node.sh
 `-- check-setup.sh
 ```

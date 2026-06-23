@@ -26,7 +26,6 @@ Docker is installed automatically by this module when it is missing.
 ```text
 umami/
 |-- env.example
-|-- README.md
 |-- setup-umami.sh
 `-- check-setup.sh
 ```

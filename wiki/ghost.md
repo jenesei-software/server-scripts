@@ -24,7 +24,6 @@ Before you begin, make sure you have:
 ```text
 ghost/
 |-- env.example
-|-- README.md
 |-- setup-ghost.sh
 `-- check-setup.sh
 ```

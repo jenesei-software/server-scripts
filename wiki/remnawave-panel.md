@@ -14,7 +14,6 @@ References:
 ```text
 remnawave-panel/
 |-- env.example
-|-- README.md
 |-- setup-remnawave-panel.sh
 |-- setup-subscription-page.sh
 `-- check-setup.sh
