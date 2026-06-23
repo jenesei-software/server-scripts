@@ -244,10 +244,9 @@ function pickAuditMetric(lhr, auditId) {
 function summarizeLighthouse(runDir) {
   const collectDir = path.join(runDir, 'lighthouse-ci', '.lighthouseci');
   const reportDir = path.join(runDir, 'lighthouse-ci', 'reports');
-  const lhrFiles = [
-    ...listFiles(collectDir, name => /^lhr-\d+\.json$/.test(name)),
-    ...listFiles(reportDir, name => /\.report\.json$/.test(name)),
-  ];
+  const collectLhrFiles = listFiles(collectDir, name => /^lhr-\d+\.json$/.test(name));
+  const reportJsonFiles = listFiles(reportDir, name => /\.report\.json$/.test(name));
+  const lhrFiles = collectLhrFiles.length ? collectLhrFiles : reportJsonFiles;
 
   const lhrs = [];
   const seenFiles = new Set();
@@ -727,7 +726,7 @@ function allRunsTable(title, rows) {
               <th>Запуск</th>
               <th>Сервер</th>
               <th>Статус</th>
-              <th>LHCI запусков</th>
+              <th>Lighthouse прогонов</th>
               <th>Perf</th>
               <th>FCP</th>
               <th>LCP</th>
