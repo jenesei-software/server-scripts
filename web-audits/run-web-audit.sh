@@ -223,7 +223,7 @@ load_env() {
   elif [[ -n "$ENV_FILE" ]]; then
     fail "Environment file not found: $ENV_FILE"
   else
-    log "Environment file is optional for this module; using defaults"
+    log "No .env file found; using built-in defaults. Copy env.example to .env to override settings."
   fi
 
   WEB_AUDIT_RESULTS_DIR="$(absolute_module_path "${WEB_AUDIT_RESULTS_DIR:-reports}")"
@@ -534,14 +534,7 @@ install_chrome_if_missing() {
 }
 
 install_lhci_if_missing() {
-  local lhci_path
   local npm_path
-
-  if lhci_path="$(find_linux_command lhci)"; then
-    log "Lighthouse CI CLI is already installed: $("$lhci_path" --version)"
-    LHCI_CMD=("$lhci_path")
-    return
-  fi
 
   local lhci_dir="$SCRIPT_DIR/.tools/lhci"
   local lhci_bin="$lhci_dir/node_modules/.bin/lhci"

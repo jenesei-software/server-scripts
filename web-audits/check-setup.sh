@@ -172,7 +172,7 @@ load_env() {
   elif [[ -n "$ENV_FILE" ]]; then
     warn "Environment file not found: $ENV_FILE"
   else
-    info "Environment file is optional for this module; using defaults"
+    info "No .env file found; using built-in defaults. Copy env.example to .env to override settings."
   fi
 
   WEB_AUDIT_RESULTS_DIR="$(absolute_module_path "${WEB_AUDIT_RESULTS_DIR:-reports}")"
@@ -227,16 +227,15 @@ check_lighthouse_dependencies() {
   else
     err "Command not found: npm"
   fi
-  if lhci_path="$(find_linux_command lhci)"; then
-    ok "Linux Lighthouse CI command found: $lhci_path"
-    info "Lighthouse CI version: $("$lhci_path" --version)"
-  elif command -v lhci >/dev/null 2>&1; then
-    err "Lighthouse CI resolves to a Windows/non-Linux command: $(command -v lhci)"
-  elif [[ -x "$SCRIPT_DIR/.tools/lhci/node_modules/.bin/lhci" ]]; then
+  if [[ -x "$SCRIPT_DIR/.tools/lhci/node_modules/.bin/lhci" ]]; then
     ok "Local Lighthouse CI command found: $SCRIPT_DIR/.tools/lhci/node_modules/.bin/lhci"
     info "Lighthouse CI version: $("$SCRIPT_DIR/.tools/lhci/node_modules/.bin/lhci" --version)"
+  elif lhci_path="$(find_linux_command lhci)"; then
+    warn "Global Lighthouse CI command found but this module uses local .tools only: $lhci_path"
+  elif command -v lhci >/dev/null 2>&1; then
+    warn "Global Lighthouse CI resolves to a Windows/non-Linux command and is ignored: $(command -v lhci)"
   else
-    err "Lighthouse CI CLI is not installed globally or locally"
+    warn "Local Lighthouse CI CLI is not installed yet; run-web-audit.sh will install it into web-audits/.tools/lhci"
   fi
 
   if [[ -n "$WEB_AUDIT_CHROME_PATH" ]] && is_windows_interop_path "$WEB_AUDIT_CHROME_PATH"; then

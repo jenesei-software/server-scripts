@@ -29,6 +29,24 @@ bash run-web-audit.sh
 
 Run it as your normal SSH user. The script asks for `sudo` only when it needs to install packages, manage Docker, or clean up Docker after a sitespeed.io run.
 
+## Configuration
+
+Create a local config before changing defaults:
+
+```bash
+cd ~/server-scripts-web-audits/web-audits
+cp env.example .env
+nano .env
+```
+
+`env.example` is only a template from Git. The scripts do not load it automatically. Runtime settings are loaded from `web-audits/.env`, or from a custom `.env` file passed as the first argument:
+
+```bash
+bash run-web-audit.sh .env https://example.com lighthouse
+```
+
+If `.env` is missing, the scripts use built-in defaults from `run-web-audit.sh`.
+
 ## Running Without Sudo
 
 The audit itself can run without `sudo` when the server is already prepared.
@@ -40,7 +58,8 @@ For Lighthouse CI without `sudo`, the user needs:
 * Linux Google Chrome, Google Chrome Stable, or Chromium already installed and available in `PATH`
 * `jq`, `zip`, `tar`, and `curl` already installed
 
-The script installs `@lhci/cli` locally into `web-audits/.tools/`, so global `npm install -g` is not required.
+Lighthouse CI CLI is module-local: `run-web-audit.sh` uses `web-audits/.tools/lhci/node_modules/.bin/lhci` and installs it there when it is missing. Global `lhci` installations are ignored for reproducible runs.
+
 If Node.js is installed through Unix nvm, the scripts try to source `~/.nvm/nvm.sh` before checking `node` and `npm`.
 
 For sitespeed.io without `sudo`, the user needs:
@@ -79,7 +98,7 @@ cd ~/server-scripts/web-audits
 bash run-web-audit.sh https://example.com all
 ```
 
-With a custom env file:
+With the default `.env` file, no extra argument is needed. With a custom env file:
 
 ```bash
 bash run-web-audit.sh .env https://example.com lighthouse
@@ -177,6 +196,8 @@ web-audits/reports/<site>/<timestamp>.zip
 ```
 
 ## Env
+
+Copy this from `env.example` into `.env` and edit `.env`:
 
 ```env
 WEB_AUDIT_RESULTS_DIR=reports
