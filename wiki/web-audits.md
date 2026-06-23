@@ -181,12 +181,35 @@ WEB_AUDIT_DEFAULT_TEST=all
 WEB_AUDIT_NODE_MAJOR=22
 WEB_AUDIT_LHCI_VERSION=latest
 WEB_AUDIT_LHCI_RUNS=3
+WEB_AUDIT_LHCI_TIMEOUT=10m
+WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD=45000
+WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP=30000
 WEB_AUDIT_SITESPEED_IMAGE=sitespeedio/sitespeed.io:41.3.3
 WEB_AUDIT_SITESPEED_BROWSER=chrome
 WEB_AUDIT_SITESPEED_RUNS=3
 WEB_AUDIT_SITESPEED_CONNECTIVITY=native
+WEB_AUDIT_SITESPEED_TIMEOUT=30m
 WEB_AUDIT_CREATE_ZIP=true
 WEB_AUDIT_STOP_DOCKER_AFTER_RUN=true
+```
+
+## Timeouts
+
+Lighthouse should not run for tens of minutes on one page. The module uses two layers of protection:
+
+* `WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD` and `WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP` are passed into Lighthouse settings in milliseconds.
+* `WEB_AUDIT_LHCI_TIMEOUT` wraps the whole `lhci collect` command.
+
+If a run is already stuck, press `Ctrl+C`. If the terminal does not return, inspect and stop the related processes:
+
+```bash
+ps aux | grep -E 'lhci|lighthouse|chrome' | grep -v grep
+```
+
+Then stop only the relevant process IDs:
+
+```bash
+kill PID
 ```
 
 ## Download To Windows

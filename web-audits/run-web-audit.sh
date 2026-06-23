@@ -178,11 +178,15 @@ load_env() {
   WEB_AUDIT_LHCI_VERSION="${WEB_AUDIT_LHCI_VERSION:-latest}"
   WEB_AUDIT_LHCI_RUNS="${WEB_AUDIT_LHCI_RUNS:-3}"
   WEB_AUDIT_LHCI_CHROME_FLAGS="${WEB_AUDIT_LHCI_CHROME_FLAGS:---headless=new --no-sandbox --disable-dev-shm-usage}"
+  WEB_AUDIT_LHCI_TIMEOUT="${WEB_AUDIT_LHCI_TIMEOUT:-10m}"
+  WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD="${WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD:-45000}"
+  WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP="${WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP:-30000}"
   WEB_AUDIT_SITESPEED_IMAGE="${WEB_AUDIT_SITESPEED_IMAGE:-sitespeedio/sitespeed.io:41.3.3}"
   WEB_AUDIT_SITESPEED_BROWSER="${WEB_AUDIT_SITESPEED_BROWSER:-chrome}"
   WEB_AUDIT_SITESPEED_RUNS="${WEB_AUDIT_SITESPEED_RUNS:-3}"
   WEB_AUDIT_SITESPEED_CONNECTIVITY="${WEB_AUDIT_SITESPEED_CONNECTIVITY:-native}"
   WEB_AUDIT_SITESPEED_DOCKER_SHM_SIZE="${WEB_AUDIT_SITESPEED_DOCKER_SHM_SIZE:-2g}"
+  WEB_AUDIT_SITESPEED_TIMEOUT="${WEB_AUDIT_SITESPEED_TIMEOUT:-30m}"
   WEB_AUDIT_SITESPEED_EXTRA_ARGS="${WEB_AUDIT_SITESPEED_EXTRA_ARGS:-}"
   WEB_AUDIT_CREATE_ZIP="${WEB_AUDIT_CREATE_ZIP:-true}"
   WEB_AUDIT_STOP_DOCKER_AFTER_RUN="${WEB_AUDIT_STOP_DOCKER_AFTER_RUN:-true}"
@@ -205,6 +209,8 @@ validate_env() {
   [[ "$WEB_AUDIT_DEFAULT_TEST" == "all" || "$WEB_AUDIT_DEFAULT_TEST" == "lighthouse" || "$WEB_AUDIT_DEFAULT_TEST" == "sitespeed" ]] || fail "WEB_AUDIT_DEFAULT_TEST must be all, lighthouse, or sitespeed"
   [[ "$WEB_AUDIT_NODE_MAJOR" =~ ^[0-9]+$ ]] || fail "WEB_AUDIT_NODE_MAJOR must be numeric"
   validate_positive_int WEB_AUDIT_LHCI_RUNS "$WEB_AUDIT_LHCI_RUNS"
+  validate_positive_int WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD "$WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD"
+  validate_positive_int WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP "$WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP"
   validate_positive_int WEB_AUDIT_SITESPEED_RUNS "$WEB_AUDIT_SITESPEED_RUNS"
   validate_bool WEB_AUDIT_CREATE_ZIP "$WEB_AUDIT_CREATE_ZIP"
   validate_bool WEB_AUDIT_STOP_DOCKER_AFTER_RUN "$WEB_AUDIT_STOP_DOCKER_AFTER_RUN"
@@ -502,6 +508,8 @@ write_lhci_config() {
   TEST_URL="$TEST_URL" \
   WEB_AUDIT_LHCI_RUNS="$WEB_AUDIT_LHCI_RUNS" \
   WEB_AUDIT_LHCI_CHROME_FLAGS="$WEB_AUDIT_LHCI_CHROME_FLAGS" \
+  WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD="$WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD" \
+  WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP="$WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP" \
     node <<'NODE' > "$target_dir/lighthouserc.json"
 const config = {
   ci: {
@@ -509,7 +517,9 @@ const config = {
       url: [process.env.TEST_URL],
       numberOfRuns: Number(process.env.WEB_AUDIT_LHCI_RUNS || 3),
       settings: {
-        chromeFlags: process.env.WEB_AUDIT_LHCI_CHROME_FLAGS || '--headless=new --no-sandbox --disable-dev-shm-usage'
+        chromeFlags: process.env.WEB_AUDIT_LHCI_CHROME_FLAGS || '--headless=new --no-sandbox --disable-dev-shm-usage',
+        maxWaitForLoad: Number(process.env.WEB_AUDIT_LHCI_MAX_WAIT_FOR_LOAD || 45000),
+        maxWaitForFcp: Number(process.env.WEB_AUDIT_LHCI_MAX_WAIT_FOR_FCP || 30000)
       }
     },
     upload: {
@@ -536,11 +546,13 @@ run_lighthouse_ci() {
   write_lhci_config "$target_dir"
 
   log "Running Lighthouse CI for $TEST_URL"
-  (
+  if ! (
     cd "$target_dir"
-    "${LHCI_CMD[@]}" collect --config=lighthouserc.json
-    "${LHCI_CMD[@]}" upload --config=lighthouserc.json
-  ) 2>&1 | tee "$log_file"
+    timeout --foreground "$WEB_AUDIT_LHCI_TIMEOUT" "${LHCI_CMD[@]}" collect --config=lighthouserc.json
+    timeout --foreground "$WEB_AUDIT_LHCI_TIMEOUT" "${LHCI_CMD[@]}" upload --config=lighthouserc.json
+  ) 2>&1 | tee "$log_file"; then
+    fail "Lighthouse CI failed or timed out after $WEB_AUDIT_LHCI_TIMEOUT. See log: $log_file"
+  fi
 
   [[ -f "$target_dir/reports/manifest.json" ]] || fail "Lighthouse CI report manifest was not created: $target_dir/reports/manifest.json"
 }
@@ -562,7 +574,7 @@ run_sitespeed() {
   fi
 
   log "Running sitespeed.io for $TEST_URL"
-  docker_cmd run \
+  if ! timeout --foreground "$WEB_AUDIT_SITESPEED_TIMEOUT" "${DOCKER_CMD[@]}" run \
     --shm-size "$WEB_AUDIT_SITESPEED_DOCKER_SHM_SIZE" \
     --rm \
     --name "$SITESPEED_CONTAINER_NAME" \
@@ -576,7 +588,9 @@ run_sitespeed() {
     -n "$WEB_AUDIT_SITESPEED_RUNS" \
     -c "$WEB_AUDIT_SITESPEED_CONNECTIVITY" \
     "${extra_args[@]}" \
-    "$TEST_URL" 2>&1 | tee "$log_file"
+    "$TEST_URL" 2>&1 | tee "$log_file"; then
+    fail "sitespeed.io failed or timed out after $WEB_AUDIT_SITESPEED_TIMEOUT. See log: $log_file"
+  fi
 
   SITESPEED_CONTAINER_NAME=""
   chown_reports_if_needed
@@ -624,6 +638,7 @@ main() {
   prompt_for_test_type
   install_base_packages
   require_cmd jq
+  require_cmd timeout
   prepare_report_dir
   write_metadata "running"
 
