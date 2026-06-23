@@ -101,7 +101,7 @@ ssh root@YOUR_SERVER_IP
 apt update && apt install -y git
 git clone --filter=blob:none --sparse https://github.com/jenesei-software/ubuntu.git server-scripts-web-audits
 cd server-scripts-web-audits
-git sparse-checkout set web-audits wiki/web-audits.md .gitattributes .gitignore
+git sparse-checkout set web-audits wiki
 ```
 
 Run:
